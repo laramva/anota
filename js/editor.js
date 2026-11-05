@@ -198,7 +198,8 @@ export class Editor {
     this.playerBar = el('div', { class: 'ed-player hidden' });
     r.append(top, this.body, this.playerBar);
     this.ctx = this.canvas.getContext('2d');
-    this.lctx = this.liveCanvas.getContext('2d');
+    // camada do traço ao vivo: pedimos ao navegador o modo de menor atraso
+    this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true }) || this.liveCanvas.getContext('2d');
     this.updateToolUi();
     this.updateUndoUi();
   }
@@ -470,7 +471,7 @@ export class Editor {
       const p = L.page;
       c.setTransform(k, 0, 0, k, (p._ox - this.cam.x) * k, (p._oy - this.cam.y) * k);
       c.beginPath(); c.rect(0, 0, p.w, p.h); c.clip();
-      const f = new Float32Array(L.pts);
+      const f = new Float32Array(L.pred?.length ? L.pts.concat(L.pred) : L.pts);
       if (L.tool === 'highlighter') {
         c.globalAlpha = 0.38;
         c.strokeStyle = L.color; c.lineWidth = L.size; c.lineCap = 'round'; c.lineJoin = 'round';
@@ -482,7 +483,7 @@ export class Editor {
         c.stroke(R.straightPath(f));
       } else {
         c.fillStyle = R.inkColor(L.color, !p.pdf && R.isDarkColor(p.paperColor));
-        c.fill(R.outlinePath(getStroke(R.toPointArray(f), R.strokeOpts(L, false))));
+        c.fill(R.outlinePath(getStroke(R.toPointArray(f), R.strokeOpts(L, true))));
       }
     }
     const E = this.erase;
@@ -530,7 +531,7 @@ export class Editor {
     on(s, 'pointerup', e => this.onUp(e, false));
     on(s, 'pointercancel', e => this.onUp(e, true));
     on(s, 'pointerleave', e => { if (e.pointerType === 'mouse' && !e.buttons) this.onUp(e, false); });
-    const stopTouch = e => { if (!e.target.closest('textarea, input, button, .sel-bar')) e.preventDefault(); };
+    const stopTouch = e => { if (!e.target.closest('textarea, input, button, .sel-bar, .ed-tips')) e.preventDefault(); };
     on(s, 'touchstart', stopTouch, { passive: false });
     on(s, 'touchmove', stopTouch, { passive: false });
     on(s, 'gesturestart', e => e.preventDefault(), { passive: false });
@@ -551,7 +552,7 @@ export class Editor {
     store.save('note', this.note).catch(() => { });
   }
 
-  isUiTarget(e) { return !!e.target.closest?.('textarea, input, button, .sel-bar'); }
+  isUiTarget(e) { return !!e.target.closest?.('textarea, input, button, .sel-bar, .ed-tips'); }
 
   onDown(e) {
     if (this.isUiTarget(e)) return;
@@ -840,6 +841,15 @@ export class Editor {
         L.pts.push(x, y, pr);
       }
     }
+    // previsão do iPad: desenha um pouquinho à frente da ponta (só na tela, não é salvo)
+    L.pred = [];
+    if (!L.shape && e.getPredictedEvents) {
+      const pe = e.getPredictedEvents();
+      for (let i = 0; i < Math.min(2, pe.length); i++) {
+        const ev = pe[i];
+        L.pred.push(this.cam.x + (ev.clientX - this.rect.left) / z - p._ox, this.cam.y + (ev.clientY - this.rect.top) / z - p._oy, L.pts[L.pts.length - 1] || 0.5);
+      }
+    }
   }
 
   armHold(e) {
@@ -862,7 +872,19 @@ export class Editor {
     const L = this.live;
     this.pushPoints(e);
     if (L.hold && Math.hypot(e.clientX - L.hold.x, e.clientY - L.hold.y) > 4) this.armHold(e);
-    this.requestLive();
+    // desenha na hora (sem esperar o próximo quadro)
+    if (this.rafLive) { cancelAnimationFrame(this.rafLive); this.rafLive = 0; }
+    this.renderLive();
+  }
+
+  // desenha só o traço novo na página (sem redesenhar tudo) ao soltar a caneta
+  drawItemNow(it, p) {
+    const ctx = this.ctx, k = this.dpr * this.cam.z;
+    ctx.save();
+    ctx.setTransform(k, 0, 0, k, (p._ox - this.cam.x) * k, (p._oy - this.cam.y) * k);
+    ctx.beginPath(); ctx.rect(0, 0, p.w, p.h); ctx.clip();
+    R.drawItem(ctx, it, { dark: !p.pdf && R.isDarkColor(p.paperColor), getImage: id => this.getImage(id) });
+    ctx.restore();
   }
 
   endStroke() {
@@ -885,7 +907,9 @@ export class Editor {
     this.addMem(it);
     this.pushUndo({ type: 'add', items: [it] });
     this.persist('item', [it]);
-    this.render();
+    // marca-texto vai por baixo da tinta: precisa redesenhar a página; caneta só desenha o traço novo
+    if (L.tool === 'highlighter' || this.player || this.sel) this.render();
+    else this.drawItemNow(it, L.page);
     this.lctx.setTransform(1, 0, 0, 1, 0, 0);
     this.lctx.clearRect(0, 0, this.liveCanvas.width, this.liveCanvas.height);
     this.maybeAppendPage(L.page, it.bbox[3]);
