@@ -9,6 +9,8 @@ import { icon, iconBtn, toast, menu, popover, closeMenu, promptText, confirmBox,
 import { getStroke } from '../vendor/perfect-freehand.mjs';
 import { addPdfPages, exportNotePdf, shareOrDownload, renderThumb } from './export.js';
 import { recognize, densifyLine } from './shapes.js';
+import { openCardEditor, selectionImage } from './cards-ui.js';
+import { editorTips } from './help.js';
 
 const GAP = 36, TOP = 28;
 
@@ -63,8 +65,23 @@ export class Editor {
       store.bus.on('remote', ids => { if (ids.includes(this.note.id)) this.reloadFromRemote(); }),
       audio.audioBus.on('change', () => this.updateRecUi()),
       audio.audioBus.on('interrupted', () => { toast('A gravação foi encerrada e salva porque o app saiu da tela.'); this.loadRecordings(); }),
+      audio.audioBus.on('interim', t => this.showCaption(null, t)),
+      audio.audioBus.on('transcript', segs => this.showCaption(segs[segs.length - 1]?.text, '')),
+      audio.audioBus.on('transcript-error', () => { if (!this._srWarned) { this._srWarned = true; toast('A transcrição não está disponível agora (precisa de internet e do Ditado do iPad ligado). O áudio continua gravando.', { timeout: 7000 }); } }),
     ];
     this.updateRecUi();
+    const jump = location.hash.match(/\/p\/([\w-]+)/);
+    if (jump) { const p = this.pages.find(x => x.id === jump[1]); if (p) this.goToPage(p); }
+    if (!loadPref('editorTips', false)) {
+      const t = editorTips(() => { savePref('editorTips', true); t.remove(); });
+      this.stage.append(t);
+    }
+  }
+
+  showCaption(final, interim) {
+    if (!this.liveCap) return;
+    if (final != null) this._capFinal = final;
+    this.liveCap.replaceChildren(el('span', { class: 'cap-dot' }), el('span', {}, (this._capFinal || '') + (interim ? ' ' : ''), el('i', {}, interim || '')));
   }
 
   async loadData() {
@@ -142,37 +159,40 @@ export class Editor {
 
     this.titleBtn = el('button', { class: 'ed-title', onclick: () => this.rename() }, this.note.title);
     this.toolBtns = {};
-    const tools = [['pen', 'pen', 'Caneta'], ['highlighter', 'highlighter', 'Marca-texto'], ['eraser', 'eraser', 'Borracha'], ['lasso', 'lasso', 'Laço (selecionar)'], ['text', 'text', 'Texto']];
+    // botões com nome embaixo do ícone (fica claro o que cada um faz)
+    const lb = (ic, label, onClick, cls = '') => el('button', { class: 'lbtn ' + cls, title: label, 'aria-label': label, onclick: onClick }, icon(ic, 21), el('span', { class: 'lbl' }, label));
+    const tools = [['pen', 'pen', 'Caneta'], ['highlighter', 'highlighter', 'Marca-texto'], ['eraser', 'eraser', 'Borracha'], ['lasso', 'lasso', 'Laço'], ['text', 'text', 'Texto']];
     const toolGroup = el('div', { class: 'tool-group' });
     for (const [id, ic, label] of tools) {
-      const b = iconBtn(ic, label, () => {
+      const b = lb(ic, label, () => {
         if (this.tool === id && id !== 'lasso') this.openToolSettings(b);
         else this.setTool(id);
       }, 'tool');
       this.toolBtns[id] = b;
       toolGroup.append(b);
     }
-    toolGroup.append(iconBtn('image', 'Inserir imagem', () => this.insertImage(), 'tool'));
+    this.insertBtn = lb('plus', 'Inserir', e => this.openInsertMenu(e.currentTarget), 'insert');
 
     this.swatch = el('button', { class: 'swatch-btn', title: 'Cor', onclick: e => this.openToolSettings(e.currentTarget) });
     this.sizeGroup = el('div', { class: 'size-group' });
     this.undoBtn = iconBtn('undo', 'Desfazer', () => this.undo());
     this.redoBtn = iconBtn('redo', 'Refazer', () => this.redo());
-    this.recBtn = el('button', { class: 'rec-btn', title: 'Gravar áudio', onclick: () => this.toggleRecord() }, icon('mic'), el('span', { class: 'rec-time' }));
-    this.playBtn = iconBtn('play', 'Gravações', e => this.openRecordingsMenu(e.currentTarget));
-    const moreBtn = iconBtn('more', 'Mais opções', e => this.openMoreMenu(e.currentTarget));
-    this.pagesBtn = iconBtn('pages', 'Páginas', () => this.togglePages());
+    this.recBtn = el('button', { class: 'lbtn rec-btn', title: 'Gravar aula', onclick: () => this.toggleRecord() }, icon('mic', 21), el('span', { class: 'lbl rec-time' }, 'Gravar'));
+    this.playBtn = lb('wave', 'Áudios', e => this.openRecordingsMenu(e.currentTarget));
+    const moreBtn = lb('more', 'Mais', e => this.openMoreMenu(e.currentTarget));
+    this.pagesBtn = lb('pages', 'Páginas', () => this.togglePages());
 
     const top = el('div', { class: 'ed-top' },
       el('div', { class: 'ed-left' }, iconBtn('back', 'Voltar', () => this.exit()), this.titleBtn, this.pagesBtn),
-      el('div', { class: 'ed-center' }, toolGroup, el('div', { class: 'sep' }), this.swatch, this.sizeGroup),
+      el('div', { class: 'ed-center' }, toolGroup, this.insertBtn, el('div', { class: 'sep' }), this.swatch, this.sizeGroup),
       el('div', { class: 'ed-right' }, this.undoBtn, this.redoBtn, el('div', { class: 'sep' }), this.recBtn, this.playBtn, moreBtn));
 
     this.canvas = el('canvas', { class: 'ed-main' });
     this.liveCanvas = el('canvas', { class: 'ed-live' });
     this.overlay = el('div', { class: 'ed-overlay' });
     this.pageInd = el('div', { class: 'page-ind' });
-    this.stage = el('div', { class: 'ed-stage' }, this.canvas, this.liveCanvas, this.overlay, this.pageInd);
+    this.liveCap = el('div', { class: 'live-cap hidden' }, el('span', { class: 'cap-dot' }), el('span', { class: 'muted' }, 'Gravando… a transcrição aparece aqui'));
+    this.stage = el('div', { class: 'ed-stage' }, this.canvas, this.liveCanvas, this.overlay, this.pageInd, this.liveCap);
     this.pagesPanel = el('aside', { class: 'pages-panel hidden' });
     this.body = el('div', { class: 'ed-body' }, this.stage, this.pagesPanel);
     this.playerBar = el('div', { class: 'ed-player hidden' });
@@ -1089,12 +1109,27 @@ export class Editor {
     const bar = el('div', { class: 'sel-bar' },
       el('button', { onclick: () => this.deleteSel() }, icon('trash', 18), 'Excluir'),
       el('button', { onclick: () => this.duplicateSel() }, icon('copy', 18), 'Duplicar'),
-      el('button', { onclick: () => { Editor.clipboard = s.items.map(i => ({ ...i })); toast('Copiado. Use "Colar" no menu ••• de qualquer nota.'); } }, icon('file', 18), 'Copiar'),
+      el('button', { onclick: () => { Editor.clipboard = s.items.map(i => ({ ...i })); toast('Copiado. Use "Inserir › Colar" em qualquer nota.'); } }, icon('file', 18), 'Copiar'),
+      el('button', { onclick: e => this.selToFlashcard(e.currentTarget) }, icon('cards', 18), 'Flashcard'),
       hasColor ? el('button', { onclick: e => this.colorSel(e.currentTarget) }, icon('palette', 18), 'Cor') : null,
       s.items.length === 1 && s.items[0].type === 'text' ? el('button', { onclick: () => { const it = s.items[0]; this.clearSel(); this.editText(it, false); } }, icon('text', 18), 'Editar') : null);
     this.overlay.append(bar);
     this.selBar = bar;
     this.updateOverlay();
+  }
+
+  selToFlashcard(anchor) {
+    const s = this.sel;
+    if (!s) return;
+    const make = async side => {
+      const img = await selectionImage(s.items, s.bbox, s.page, id => this.getImage(id));
+      openCardEditor({ prefill: { frontImage: img, side, source: { noteId: this.note.id, pageId: s.page.id } } });
+    };
+    menu(anchor, [
+      { header: 'Criar flashcard com a seleção' },
+      { label: 'A seleção é a pergunta', icon: 'quiz', onClick: () => make('front') },
+      { label: 'A seleção é a resposta', icon: 'check', onClick: () => make('back') },
+    ], { align: 'center' });
   }
 
   deleteSel() {
@@ -1226,9 +1261,22 @@ export class Editor {
     this.requestRender();
   }
 
+  openInsertMenu(anchor) {
+    menu(anchor, [
+      { label: 'Foto ou imagem da galeria', icon: 'image', onClick: () => this.insertImage() },
+      { label: 'Tirar foto (quadro, livro)', icon: 'camera', onClick: () => this.insertImage(true) },
+      { label: 'PDF (slides, apostila)', icon: 'file', onClick: () => this.importPdfHere() },
+      { label: 'Página em branco', icon: 'pagePlus', onClick: () => this.addPageAfter(this.currentPage()) },
+      { label: 'Caixa de texto (digitar)', icon: 'text', onClick: () => { this.setTool('text'); toast('Toque na página onde quer escrever.'); } },
+      { sep: true },
+      { label: 'Nova flashcard', icon: 'cards', onClick: () => openCardEditor({ prefill: { source: { noteId: this.note.id, pageId: this.currentPage().id } } }) },
+      Editor.clipboard?.length ? { label: 'Colar', icon: 'copy', onClick: () => this.pasteClipboard() } : null,
+    ]);
+  }
+
   // ---------- Imagem ----------
-  async insertImage() {
-    const file = await pickFile('image/*');
+  async insertImage(camera = false) {
+    const file = await pickFile('image/*', false, camera);
     if (!file) return;
     try {
       const { data, mime, w, h } = await prepareImage(file);
@@ -1596,7 +1644,9 @@ export class Editor {
       const tick = () => { timeEl.textContent = fmtTime(audio.elapsedMs() / 1000); };
       tick();
       this._recT = setInterval(tick, 500);
-    } else timeEl.textContent = '';
+    } else timeEl.textContent = 'Gravar';
+    this.recBtn.title = on ? 'Parar gravação' : 'Gravar aula';
+    this.liveCap?.classList.toggle('hidden', !on);
     this.playBtn.classList.toggle('has-dot', !!this.recordings?.length);
   }
 
@@ -1651,10 +1701,12 @@ export class Editor {
       playBtn,
       iconBtn('fwd15', 'Avançar 15 s', () => { a.currentTime = Math.min(rec.duration, a.currentTime + 15); this.requestRender(); }),
       cur, range, dur, rateBtn,
+      rec.transcript?.length ? el('button', { class: 'btn small', onclick: () => this.toggleTranscript() }, icon('text', 16), 'Transcrição') : null,
       iconBtn('x', 'Fechar', () => this.closePlayer()));
     const sync = () => {
       cur.textContent = fmtTime(a.currentTime);
       range.value = a.currentTime;
+      this.highlightSeg(a.currentTime * 1000);
       this.requestRender();
     };
     a.addEventListener('timeupdate', sync);
@@ -1671,9 +1723,56 @@ export class Editor {
 
   seekTo(rec, sec) { this.openPlayer(rec, Math.max(0, sec), true); }
 
+  toggleTranscript() {
+    const P = this.player;
+    if (this.trPanel) { this.trPanel.remove(); this.trPanel = null; this.resize(); this.render(); return; }
+    if (!P) return;
+    const segs = P.rec.transcript || [];
+    const full = segs.map(s => s.text).join(' ');
+    const list = el('div', { class: 'tr-list' });
+    segs.forEach((s, i) => list.append(el('button', { class: 'tr-seg', 'data-i': i, onclick: () => { P.audio.currentTime = s.t / 1000; P.audio.play().catch(() => { }); } },
+      el('span', { class: 'tr-time' }, fmtTime(s.t / 1000)), el('span', {}, s.text))));
+    this.trPanel = el('div', { class: 'tr-panel' },
+      el('div', { class: 'tr-head' }, el('b', {}, 'Transcrição'), el('span', { class: 'muted small' }, 'toque numa frase para ouvir'),
+        el('span', { style: { flex: 1 } }),
+        el('button', { class: 'btn small', onclick: () => navigator.clipboard?.writeText(full).then(() => toast('Texto copiado.'), () => toast('Não foi possível copiar.')) }, icon('copy', 16), 'Copiar'),
+        el('button', { class: 'btn small', onclick: () => this.transcriptToNote(full) }, icon('text', 16), 'Colocar na nota'),
+        iconBtn('x', 'Fechar', () => this.toggleTranscript(), 'small')),
+      list);
+    this.root.insertBefore(this.trPanel, this.playerBar);
+    this._segI = -1;
+    this.highlightSeg(P.audio.currentTime * 1000);
+    this.resize(); this.render();
+  }
+
+  highlightSeg(ms) {
+    if (!this.trPanel || !this.player) return;
+    const segs = this.player.rec.transcript || [];
+    let i = -1;
+    for (let k = 0; k < segs.length; k++) if (segs[k].t <= ms) i = k; else break;
+    if (i === this._segI) return;
+    this._segI = i;
+    this.trPanel.querySelectorAll('.tr-seg').forEach(b => b.classList.toggle('active', +b.dataset.i === i));
+    this.trPanel.querySelector('.tr-seg.active')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  async transcriptToNote(text) {
+    if (!text) return;
+    const p = this.currentPage();
+    await this.addPageAfter(p);
+    const np = this.pages[this.pages.indexOf(p) + 1];
+    const it = { id: uid(), type: 'text', noteId: this.note.id, pageId: np.id, x: 70, y: 70, w: np.w - 140, text: 'Transcrição — ' + (this.player?.rec.title || '') + '\n\n' + text, fontSize: 24, color: '#1d1d1f', z: now(), deleted: false };
+    this.addMem(it);
+    this.persist('item', [it]);
+    this.pushUndo({ type: 'add', items: [it] });
+    this.requestRender();
+    toast('Transcrição colocada numa página nova.');
+  }
+
   closePlayer() {
     const P = this.player;
     if (!P) return;
+    this.trPanel?.remove(); this.trPanel = null;
     this.player = null;
     P.audio.pause();
     clearInterval(P.tick);
@@ -1730,7 +1829,7 @@ function transformItem(it, ox, oy, sc, dx, dy) {
   }
 }
 
-async function prepareImage(file) {
+export async function prepareImage(file) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('formato não suportado')); i.src = url; });
