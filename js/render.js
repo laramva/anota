@@ -32,7 +32,7 @@ export function strokeOpts(it, last = true) {
     size: it.size,
     thinning: it.sim ? 0.5 : 0.6,
     smoothing: 0.55,
-    streamline: 0.4,
+    streamline: 0.22, // menos "arrasto": o traço acompanha a ponta do Pencil
     simulatePressure: !!it.sim,
     easing: t => t,
     start: { taper: 0, cap: true },
