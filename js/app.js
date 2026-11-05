@@ -13,6 +13,15 @@ applyTheme();
 const root = document.getElementById('app');
 let current = null;
 let routing = Promise.resolve();
+let pendingReload = false;
+
+function reloadIfSafe() {
+  if (!pendingReload) return;
+  const busyNow = current instanceof Editor || document.querySelector('.study, .modal-back') || audio.isRecording();
+  if (busyNow) return;
+  pendingReload = false;
+  location.reload();
+}
 
 function openNote(id) { location.hash = '#/note/' + id; }
 
@@ -38,6 +47,7 @@ async function route() {
       location.replace('#/');
     }
   } else {
+    if (pendingReload) { reloadIfSafe(); if (!pendingReload) return; }
     const lib = new Library(root, { openNote });
     current = lib;
     await lib.init();
@@ -65,15 +75,18 @@ async function main() {
   handleAuthReturn();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     try {
+      const hadController = !!navigator.serviceWorker.controller;
       const reg = await navigator.serviceWorker.register('sw.js');
-      reg.addEventListener('updatefound', () => {
-        const w = reg.installing;
-        w?.addEventListener('statechange', () => {
-          if (w.state === 'installed' && navigator.serviceWorker.controller) {
-            toast('Nova versão disponível.', { action: 'Atualizar', timeout: 0, onAction: () => location.reload() });
-          }
-        });
+      // Atualização automática: quando sai versão nova, o app recarrega sozinho num momento seguro
+      // (fora de uma nota e sem estudo aberto). Tudo já está salvo, nada se perde.
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) return;
+        pendingReload = true;
+        reloadIfSafe();
       });
+      const check = () => reg.update().catch(() => { });
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { check(); reloadIfSafe(); } });
+      setInterval(check, 30 * 60000);
     } catch (e) { console.warn('SW', e); }
   }
   try { await navigator.storage?.persist?.(); } catch { }
