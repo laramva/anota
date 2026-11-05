@@ -9,7 +9,7 @@ import { importPdfAsNote, exportNotePdf, shareOrDownload, exportBackup, importBa
 import { TEMPLATES, PAPER_COLORS } from './render.js';
 
 const SUBJECT_COLORS = ['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.1.1';
 const NONE = '__none';
 
 export class Library {
