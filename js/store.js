@@ -3,7 +3,10 @@
 import * as db from './db.js';
 import { uid, now, emitter } from './util.js';
 
-export const KIND_STORE = { subject: 'subjects', note: 'notes', page: 'pages', item: 'items', recording: 'recordings', blob: 'blobs' };
+export const KIND_STORE = {
+  subject: 'subjects', note: 'notes', page: 'pages', item: 'items', recording: 'recordings', blob: 'blobs',
+  deck: 'decks', fnote: 'fnotes', fcard: 'fcards', revlog: 'revlog',
+};
 export const STORE_KIND = Object.fromEntries(Object.entries(KIND_STORE).map(([k, v]) => [v, k]));
 export const bus = emitter();
 
@@ -95,6 +98,17 @@ export async function purgeChildrenLocal(noteId) {
     if (store === 'blobs') await db.delMany('files', keys);
     await db.delMany(store, keys);
   }
+}
+
+// Remove localmente tudo de um baralho excluído (cartas, histórico e imagens)
+export async function purgeDeckLocal(deckId) {
+  const cardIds = await db.keysByIndex('fcards', 'deckId', deckId);
+  for (const cid of cardIds) await db.delMany('revlog', await db.keysByIndex('revlog', 'cardId', cid));
+  await db.delMany('fcards', cardIds);
+  await db.delMany('fnotes', await db.keysByIndex('fnotes', 'deckId', deckId));
+  const blobKeys = await db.keysByIndex('blobs', 'noteId', deckId);
+  await db.delMany('files', blobKeys);
+  await db.delMany('blobs', blobKeys);
 }
 
 // ---------- Arquivos (PDF, áudio, imagens) ----------
