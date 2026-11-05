@@ -7,7 +7,8 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { emitter, now } from './util.js';
 
 export const syncBus = emitter();
-const ORDER = ['subjects', 'notes', 'pages', 'blobs', 'recordings', 'items'];
+const ORDER = ['subjects', 'notes', 'pages', 'blobs', 'recordings', 'items', 'decks', 'fnotes', 'fcards', 'revlog'];
+const SCHEMA = 2; // ao mudar, baixa tudo de novo uma vez (tipos novos que versões antigas ignoravam)
 const BUCKET = 'files';
 
 let client = null;
@@ -28,6 +29,10 @@ function setStatus(status, error = null) {
 
 export async function initSync() {
   state.lastSync = await db.getMeta('lastSync', null);
+  if ((await db.getMeta('syncSchema', 1)) < SCHEMA) {
+    await db.delMeta('pullCursor');
+    await db.setMeta('syncSchema', SCHEMA);
+  }
   store.bus.on('dirty', () => { updatePending(); schedule(3000); });
   updatePending();
   if (!configured() || !window.supabase) { setStatus('off'); return; }
@@ -153,7 +158,7 @@ async function push() {
       }
       const rows = batch.map(r => ({
         id: r.id, kind,
-        note_id: kind === 'note' ? r.id : (r.noteId || null),
+        note_id: kind === 'note' ? r.id : (r.noteId || r.deckId || null),
         data: store.strip(r),
         updated_at: r.updatedAt,
         deleted: !!r.deleted,
@@ -170,7 +175,7 @@ async function push() {
         }
       }
       await db.putMany(s, clean);
-      if (kind === 'note') for (const r of batch) if (r.deleted) await purgeRemote(r.id).catch(e => console.warn(e));
+      if (kind === 'note' || kind === 'deck') for (const r of batch) if (r.deleted) await purgeRemote(r.id).catch(e => console.warn(e));
     }
   }
 }
@@ -224,7 +229,9 @@ async function merge(rows, changed) {
     if (!byStore.has(s)) byStore.set(s, []);
     byStore.get(s).push(rec);
     if (row.kind === 'note' && row.deleted) await store.purgeChildrenLocal(row.id);
-    changed.add(row.kind === 'note' ? row.id : row.note_id);
+    if (row.kind === 'deck' && row.deleted) await store.purgeDeckLocal(row.id);
+    changed.add(row.kind === 'note' || row.kind === 'deck' ? row.id : row.note_id);
+    if (['deck', 'fnote', 'fcard', 'revlog'].includes(row.kind)) changed.add('__cards');
   }
   for (const [s, recs] of byStore) await db.putMany(s, recs);
 }
