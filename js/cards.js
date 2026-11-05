@@ -22,6 +22,12 @@ export function deckOpts(deck) { return { ...DEFAULT_OPTS, ...(deck?.opts || {})
 export function createDeck(name, subjectId = null) {
   return store.save('deck', { id: uid(), name, subjectId, opts: {}, createdAt: now(), deleted: false });
 }
+export async function addNewToday(deck, n = 10) {
+  const today = dayKey(now());
+  deck.extraNew = { day: today, n: (deck.extraNew?.day === today ? deck.extraNew.n : 0) + n };
+  await store.save('deck', deck);
+}
+
 export async function deleteDeck(deck) {
   deck.deleted = true;
   await store.save('deck', deck);
@@ -113,9 +119,11 @@ export async function countsByDeck(decks) {
     else if (c.state === STATE.REVIEW) { if (c.due < end) o.review++; }
     else if (c.due < end) o.learn++;
   }
+  const today = dayKey(t);
   for (const d of decks) {
     const op = deckOpts(d), o = out[d.id];
-    o.new = Math.max(0, Math.min(o.new, op.newPerDay - (newDone[d.id] || 0)));
+    const extra = d.extraNew?.day === today ? d.extraNew.n : 0; // "+10 novas hoje" vale só para hoje
+    o.new = Math.max(0, Math.min(o.new, op.newPerDay + extra - (newDone[d.id] || 0)));
     o.review = Math.max(0, Math.min(o.review, op.revPerDay - (revDone[d.id] || 0)));
   }
   return out;
