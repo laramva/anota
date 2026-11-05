@@ -14,7 +14,8 @@ const BUCKET = 'files';
 let client = null;
 let user = null;
 const state = { status: 'off', pending: 0, lastSync: null, error: null };
-let running = false, again = false, timer = null;
+let running = false, again = false, timer = null, lastDirty = 0, pendT = null;
+function pendingSoon() { clearTimeout(pendT); pendT = setTimeout(updatePending, 2500); }
 const downloads = new Map();
 
 export const configured = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -33,7 +34,8 @@ export async function initSync() {
     await db.delMeta('pullCursor');
     await db.setMeta('syncSchema', SCHEMA);
   }
-  store.bus.on('dirty', () => { updatePending(); schedule(3000); });
+  // enquanto você escreve, nada de sincronizar nem contar pendências (isso roubava tempo da caneta)
+  store.bus.on('dirty', () => { lastDirty = Date.now(); pendingSoon(); schedule(4000); });
   updatePending();
   if (!configured() || !window.supabase) { setStatus('off'); return; }
   client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -58,7 +60,7 @@ export async function initSync() {
   window.addEventListener('online', () => schedule(0));
   window.addEventListener('offline', () => setStatus('offline'));
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') schedule(500); else syncNow();
+    if (document.visibilityState === 'visible') schedule(500); else syncNow(true);
   });
   setInterval(() => schedule(0), 45000);
   schedule(800);
@@ -92,17 +94,18 @@ export async function signUp(email, password) {
   return { needsConfirm: !data.session };
 }
 export async function signOut() {
-  await syncNow().catch(() => { });
+  await syncNow(true).catch(() => { });
   await client.auth.signOut();
 }
 
 export function schedule(ms) {
   clearTimeout(timer);
-  timer = setTimeout(syncNow, ms);
+  timer = setTimeout(() => syncNow(), ms);
 }
 
-export async function syncNow() {
+export async function syncNow(force = false) {
   if (!client || !user) return;
+  if (!force && Date.now() - lastDirty < 3000) { schedule(3500); return; } // ainda escrevendo
   if (running) { again = true; return; }
   if (!navigator.onLine) { setStatus('offline'); return; }
   running = true;
