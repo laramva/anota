@@ -9,7 +9,7 @@ import { importPdfAsNote, exportNotePdf, shareOrDownload, exportBackup, importBa
 import { TEMPLATES, PAPER_COLORS } from './render.js';
 
 const SUBJECT_COLORS = ['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
-export const APP_VERSION = '1.1.1';
+export const APP_VERSION = '1.1.2';
 const NONE = '__none';
 
 export class Library {
@@ -625,7 +625,9 @@ export class Library {
           redraw();
         } catch (e) {
           msg.className = 'small error';
-          msg.textContent = /invalid login/i.test(e.message) ? 'E-mail ou senha incorretos.' : /confirm/i.test(e.message) ? 'Confirme seu e-mail antes de entrar (veja sua caixa de entrada).' : e.message;
+          msg.textContent = /invalid login/i.test(e.message) ? 'E-mail ou senha incorretos.'
+            : /signups? not allowed|signup.*disabled/i.test(e.message) ? 'Novos cadastros estão desligados neste app. Use "Entrar" com a conta que você já tem.'
+            : /confirm/i.test(e.message) ? 'Confirme seu e-mail antes de entrar (veja sua caixa de entrada).' : e.message;
         }
       };
       sec.append(el('p', { class: 'muted small' }, 'Entre para guardar uma cópia de tudo na nuvem e recuperar em qualquer aparelho.'),
