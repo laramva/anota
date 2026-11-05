@@ -11,6 +11,7 @@ import { CardsSection, openCardEditor } from './cards-ui.js';
 import * as audio from './audio.js';
 import { prepareImage } from './editor.js';
 import { showWelcome, showHelp } from './help.js';
+import * as auto from './autocards.js';
 
 // Segurar o dedo (~0,5 s) abre o menu, sem disparar o toque normal
 function longPress(node, fn) {
@@ -29,7 +30,7 @@ function longPress(node, fn) {
 }
 
 const SUBJECT_COLORS =['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
-export const APP_VERSION = '1.2.2';
+export const APP_VERSION = '1.3.0';
 const NONE = '__none';
 
 export class Library {
@@ -66,6 +67,25 @@ export class Library {
     );
     await this.refresh();
     if (!loadPref('welcomed', false)) { savePref('welcomed', true); showWelcome(this); }
+    // flashcards automáticos das anotações (roda sozinho, fora da nota aberta)
+    this.autoT = setTimeout(() => this.runAuto(false), 4000);
+    const vis = () => { if (document.visibilityState === 'visible') { clearTimeout(this.autoT); this.autoT = setTimeout(() => this.runAuto(false), 4000); } };
+    document.addEventListener('visibilitychange', vis);
+    this.unsubs.push(() => document.removeEventListener('visibilitychange', vis), () => clearTimeout(this.autoT));
+  }
+
+  async runAuto(force) {
+    if (!force && !auto.isEnabled()) return;
+    if (force) toast('Lendo suas anotações para criar flashcards…', { timeout: 2500 });
+    const s = await auto.run({ force });
+    if (!s) return;
+    if (s.cards) {
+      toast(`✨ ${s.cards} flashcard(s) novos criados das suas anotações${s.decks.length ? ' em ' + s.decks.join(', ') : ''}.`, {
+        timeout: 9000, action: 'Ver', onAction: async () => { await this.setSection('cards'); this.cards.filter = 'auto'; this.cards.go({ type: 'browse', auto: true }); },
+      });
+    } else if (force) toast(s.error ? 'Não deu para ler agora: ' + s.error : s.pages ? 'Li suas páginas, mas não encontrei conteúdo novo para virar carta.' : 'Nenhuma página nova ou alterada para ler.', { timeout: 7000 });
+    if (s.error && !force && /chave|key/i.test(s.error)) toast('Flashcards automáticos: ' + s.error, { timeout: 8000 });
+    if (this.root.isConnected) this.refresh();
   }
 
   destroy() { this.unsubs.forEach(f => f()); }
@@ -674,6 +694,7 @@ export class Library {
       box.innerHTML = '';
       box.append(el('div', { class: 'settings-head' }, el('h2', {}, 'Ajustes'), iconBtn('x', 'Fechar', () => m.close())));
       box.append(await this.accountSection(draw));
+      box.append(await this.autoSection(draw, m));
       box.append(el('section', {},
         el('h4', {}, 'Backup em arquivo'),
         el('p', { class: 'muted small' }, 'Gera um arquivo .zip com todas as notas, PDFs e áudios. Salve no app Arquivos ou no iCloud Drive. Serve para restaurar tudo em qualquer aparelho.'),
@@ -731,6 +752,45 @@ export class Library {
       box.append(el('p', { class: 'muted small center' }, `Anota ${APP_VERSION}`));
     };
     draw();
+  }
+
+  async autoSection(redraw, m) {
+    const sec = el('section', {}, el('h4', {}, '✨ Flashcards automáticos (grátis)'));
+    const on = el('input', { type: 'checkbox' });
+    on.checked = loadPref('autoCards', true);
+    on.addEventListener('change', () => savePref('autoCards', on.checked));
+    const last = await auto.lastRun();
+    const hasKey = !!auto.getKey();
+    sec.append(
+      el('p', { class: 'muted small' }, 'Sozinho, sem você fazer nada, o app cria cartas a partir das suas anotações e guarda em baralhos separados por matéria e tema:'),
+      el('ul', { class: 'small auto-list' },
+        el('li', {}, el('b', {}, 'Marca-texto em PDF'), ' → vira carta de lacuna (sem internet, sem conta).'),
+        el('li', {}, el('b', {}, 'Caixa de texto com "termo: definição"'), ' → vira pergunta e resposta. Dica: na caixa de texto você pode escrever à mão com o Pencil que o iPad converte em texto.'),
+        el('li', {}, el('b', {}, 'Letra à mão solta na página'), ' → precisa da chave gratuita do Google abaixo (opcional).')),
+      el('label', { class: 'field-row' }, el('span', {}, 'Criar flashcards automaticamente'), on));
+    const keyIn = el('input', { type: 'text', class: 'field', placeholder: 'Cole aqui a chave do Google AI Studio (começa com AIza…)', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false', value: auto.getKey() });
+    const msg = el('p', { class: 'small' }, hasKey ? '✓ Chave salva neste iPad. A letra à mão também está sendo lida.' : '');
+    sec.append(
+      el('details', { class: 'auto-key', open: !hasKey ? true : null },
+        el('summary', {}, hasKey ? 'Leitura da letra à mão: ligada' : 'Ligar a leitura da letra à mão (grátis, 1 minuto)'),
+        el('ol', { class: 'small' },
+          el('li', {}, 'Toque em ', el('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener' }, 'aistudio.google.com/apikey'), ' e entre com sua conta Google.'),
+          el('li', {}, 'Toque em "Create API key" (Criar chave). É grátis, sem cartão.'),
+          el('li', {}, 'Copie a chave, volte aqui, cole abaixo e toque em "Salvar e testar".')),
+        keyIn, msg,
+        el('div', { class: 'row-btns' },
+          el('button', { class: 'btn primary', onclick: async () => {
+            const k = keyIn.value.trim();
+            if (!k) { auto.setKey(''); msg.textContent = 'Chave removida.'; return; }
+            msg.className = 'small'; msg.textContent = 'Testando…';
+            try { const model = await auto.testKey(k); auto.setKey(k); msg.textContent = `✓ Funcionou! (${model}). A letra à mão agora também vira flashcard.`; }
+            catch (e) { msg.className = 'small error'; msg.textContent = 'Não funcionou: ' + e.message; }
+          } }, 'Salvar e testar'),
+          hasKey ? el('button', { class: 'btn', onclick: () => { auto.setKey(''); keyIn.value = ''; msg.textContent = 'Chave removida deste iPad.'; } }, 'Remover chave') : null),
+        el('p', { class: 'muted small' }, 'A chave fica só neste iPad (não vai para a nuvem nem para o GitHub). As imagens das páginas são enviadas ao Google para leitura; no plano gratuito o Google pode usar esse conteúdo para melhorar os serviços dele. Sem chave, nada sai do iPad.')),
+      el('p', { class: 'small' }, 'Última leitura: ' + (last ? `${fmtDate(last.at)} · ${last.pages} página(s) · ${last.cards} carta(s) nova(s)` + (last.error ? ` · aviso: ${last.error}` : '') : 'ainda não')),
+      el('div', { class: 'row-btns' }, el('button', { class: 'btn', onclick: () => { m.close(); this.runAuto(true); } }, icon('sparkle', 18), 'Gerar agora')));
+    return sec;
   }
 
   async accountSection(redraw) {
