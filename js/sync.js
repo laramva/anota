@@ -80,7 +80,9 @@ export async function signIn(email, password) {
   if (error) throw error;
 }
 export async function signUp(email, password) {
-  const { data, error } = await client.auth.signUp({ email, password });
+  // Endereço exato do app (ex.: https://laramva.github.io/anota/) para o link do e-mail voltar aqui
+  const back = location.origin + location.pathname.replace(/index\.html$/, '');
+  const { data, error } = await client.auth.signUp({ email, password, options: { emailRedirectTo: back } });
   if (error) throw error;
   return { needsConfirm: !data.session };
 }
