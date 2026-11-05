@@ -1,11 +1,11 @@
 // Service worker: deixa o app abrir e funcionar sem internet
-const VERSION = 'anota-v1.2.2';
+const VERSION = 'anota-v1.3.0';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/audio.js', 'js/cards.js', 'js/cards-ui.js', 'js/config.js', 'js/db.js', 'js/editor.js', 'js/export.js', 'js/help.js', 'js/library.js',
+  'js/app.js', 'js/audio.js', 'js/autocards.js', 'js/cards.js', 'js/cards-ui.js', 'js/config.js', 'js/db.js', 'js/editor.js', 'js/export.js', 'js/help.js', 'js/library.js',
   'js/pdfview.js', 'js/render.js', 'js/shapes.js', 'js/srs.js', 'js/store.js', 'js/sync.js', 'js/ui.js', 'js/util.js',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js', 'vendor/supabase.js', 'vendor/fflate.js', 'vendor/perfect-freehand.mjs',
-  'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/icon-152.png', 'icons/icon-167.png',
 ];
 
 self.addEventListener('install', e => {
