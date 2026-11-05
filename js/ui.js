@@ -62,6 +62,21 @@ const P = {
   inbox: '<path d="M3.5 13.5l2.5-8h12l2.5 8v5a2 2 0 01-2 2h-13a2 2 0 01-2-2z"/><path d="M3.5 13.5h5l1 2h5l1-2h5"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
   tag: '<path d="M3.5 12.5V5a1.5 1.5 0 011.5-1.5h7.5l8 8-9 9z"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/>',
+  cards: '<rect x="6.5" y="3.5" width="13" height="15" rx="2"/><path d="M4.5 6.5v12a2 2 0 002 2h10"/><path d="M10 9h6M10 12.5h4"/>',
+  flip: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M12 5v14"/><path d="M8 10l-2 2 2 2M16 10l2 2-2 2"/>',
+  quiz: '<circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.2"/><circle cx="12" cy="16.8" r=".9" fill="currentColor"/>',
+  match: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><path d="M14.5 17l2 2 3.5-4"/>',
+  chart: '<path d="M4 20V4"/><path d="M4 20h16"/><rect x="7" y="12" width="3" height="5" rx=".5"/><rect x="12" y="8" width="3" height="9" rx=".5"/><rect x="17" y="5" width="3" height="12" rx=".5"/>',
+  brain: '<path d="M9 4.5a3 3 0 00-3 3 3 3 0 00-1.5 5.5A3 3 0 007 18a2.5 2.5 0 005 0V6.5a2 2 0 00-3-2z"/><path d="M15 4.5a3 3 0 013 3 3 3 0 011.5 5.5A3 3 0 0117 18a2.5 2.5 0 01-5 0"/>',
+  volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 010 6M18 6.5a7.5 7.5 0 010 11"/>',
+  fire: '<path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.7 3-5.6 4-9.3 2.3 1.4 3.3 3.5 3.3 5.5 1-.6 1.6-1.6 1.8-2.8 1.9 1.7 3.9 4 3.9 6.8 0 3.5-2.6 6-6.5 6z"/>',
+  bolt: '<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>',
+  camera: '<path d="M4.5 8h3l1.5-2.5h6L16.5 8h3a1.5 1.5 0 011.5 1.5v8.5a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 18V9.5A1.5 1.5 0 014.5 8z"/><circle cx="12" cy="13.5" r="3.5"/>',
+  wave: '<path d="M4 12h1M7.5 8v8M11 5v14M14.5 9v6M18 7v10M21 12h-1"/>',
+  help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.2"/><circle cx="12" cy="16.8" r=".9" fill="currentColor"/>',
+  sparkle: '<path d="M12 3.5l1.8 5.2 5.2 1.8-5.2 1.8L12 17.5l-1.8-5.2L5 10.5l5.2-1.8z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+  flag: '<path d="M5.5 21V4"/><path d="M5.5 4.5h11l-2 4 2 4h-11"/>',
+  pause2: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
   download: '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
   upload: '<path d="M12 15V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M5 19.5h14"/>',
 };
@@ -173,10 +188,11 @@ export function menu(anchor, items, opts) {
   return popover(anchor, list, opts);
 }
 
-export function pickFile(accept, multiple = false) {
+export function pickFile(accept, multiple = false, camera = false) {
   return new Promise(res => {
     const inp = el('input', { type: 'file', accept, style: { display: 'none' } });
     if (multiple) inp.multiple = true;
+    if (camera) inp.setAttribute('capture', 'environment');
     inp.addEventListener('change', () => { res(multiple ? [...inp.files] : inp.files[0] || null); inp.remove(); });
     document.body.append(inp);
     inp.click();
