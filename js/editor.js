@@ -4,7 +4,7 @@ import * as store from './store.js';
 import * as pdf from './pdfview.js';
 import * as R from './render.js';
 import * as audio from './audio.js';
-import { el, uid, now, clamp, encodePts, loadPref, savePref, fmtTime, debounce, isIPad } from './util.js';
+import { el, uid, now, clamp, encodePts, loadPref, savePref, fmtTime, debounce, isIPad, defaultPaper } from './util.js';
 import { icon, iconBtn, toast, menu, popover, closeMenu, promptText, confirmBox, pickFile, busy, cssVar } from './ui.js';
 import { getStroke } from '../vendor/perfect-freehand.mjs';
 import { addPdfPages, exportNotePdf, shareOrDownload, renderThumb } from './export.js';
@@ -1342,7 +1342,7 @@ export class Editor {
     const i = this.pages.indexOf(p);
     const next = this.pages[i + 1];
     const order = next ? (p.order + next.order) / 2 : p.order + 1;
-    const np = await store.createPage(this.note.id, { order, template: p.pdf ? 'lined' : p.template, paperColor: p.pdf ? '#ffffff' : p.paperColor, w: p.w, h: p.pdf ? Math.round(p.w * 1.4145) : p.h });
+    const np = await store.createPage(this.note.id, { order, template: p.pdf ? 'lined' : p.template, paperColor: p.pdf ? defaultPaper() : p.paperColor, w: p.w, h: p.pdf ? Math.round(p.w * 1.4145) : p.h });
     this.pages.splice(i + 1, 0, np);
     this.byPage.set(np.id, []);
     this.layout();
