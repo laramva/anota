@@ -2,9 +2,51 @@
 
 import * as db from './db.js';
 import * as store from './store.js';
-import { uid, now, emitter } from './util.js';
+import { uid, now, emitter, loadPref } from './util.js';
 
 export const audioBus = emitter();
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+export const canTranscribe = () => !!SR;
+
+// Transcrição ao vivo (reconhecimento de fala do próprio iPad). Se falhar, o áudio continua gravando.
+function startTranscription(rec) {
+  rec.transcript = [];
+  let fails = 0;
+  const run = () => {
+    if (active !== rec || rec.srFailed) return;
+    const r = new SR();
+    r.lang = loadPref('transcribeLang', 'pt-BR');
+    r.continuous = true;
+    r.interimResults = true;
+    let segStart = null;
+    r.onresult = e => {
+      fails = 0;
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (segStart == null) segStart = performance.now() - rec.startPerf;
+        if (res.isFinal) {
+          const text = res[0].transcript.trim();
+          if (text) {
+            rec.transcript.push({ t: Math.max(0, Math.round(segStart - 1200)), text });
+            db.setMeta('activeRecTranscript', { id: rec.id, segs: rec.transcript }).catch(() => { });
+            audioBus.emit('transcript', rec.transcript);
+          }
+          segStart = null;
+          audioBus.emit('interim', '');
+        } else audioBus.emit('interim', res[0].transcript);
+      }
+    };
+    r.onerror = e => {
+      if (['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'].includes(e.error)) {
+        rec.srFailed = true;
+        audioBus.emit('transcript-error', e.error);
+      } else fails++;
+    };
+    r.onend = () => { if (active === rec && !rec.srFailed && fails < 8) setTimeout(run, 300); };
+    try { r.start(); rec.sr = r; } catch { rec.srFailed = true; audioBus.emit('transcript-error', 'start'); }
+  };
+  run();
+}
 let active = null; // { id, noteId, startedAt, startPerf, mr, stream, seq, mime, pending:Set, wake }
 
 function pickMime() {
@@ -38,6 +80,7 @@ export async function startRecording(noteId) {
   mr.onerror = e => { audioBus.emit('error', e.error || e); stopRecording(); };
   mr.start(2000);
   active = rec;
+  if (SR && loadPref('transcribe', true)) startTranscription(rec);
   try { rec.wake = await navigator.wakeLock?.request('screen'); } catch { }
   audioBus.emit('change');
   return rec;
@@ -52,16 +95,17 @@ export async function stopRecording() {
     rec.mr.addEventListener('stop', () => res(), { once: true });
     try { rec.mr.stop(); } catch { res(); }
   });
+  try { rec.sr?.stop(); } catch { }
   rec.stream.getTracks().forEach(t => t.stop());
   try { await rec.wake?.release(); } catch { }
   await Promise.all([...rec.pending]);
   const duration = (performance.now() - rec.startPerf) / 1000;
-  const r = await finalize(rec.id, rec.noteId, rec.startedAt, rec.mime, duration);
+  const r = await finalize(rec.id, rec.noteId, rec.startedAt, rec.mime, duration, rec.transcript || []);
   audioBus.emit('change');
   return r;
 }
 
-async function finalize(recId, noteId, startedAt, mime, duration) {
+async function finalize(recId, noteId, startedAt, mime, duration, transcript = []) {
   const chunks = (await db.byIndex('chunks', 'recId', recId)).sort((a, b) => a.seq - b.seq);
   if (!chunks.length) { await db.delMeta('activeRec'); return null; }
   const total = chunks.reduce((s, c) => s + c.data.byteLength, 0);
@@ -72,11 +116,12 @@ async function finalize(recId, noteId, startedAt, mime, duration) {
   const blob = await store.createBlob({ noteId, data: buf.buffer, mime: mime.split(';')[0], name: 'audio' });
   const d = new Date(startedAt);
   const rec = await store.save('recording', {
-    id: recId, noteId, blobId: blob.id, startedAt, duration, mime: blob.mime, deleted: false,
+    id: recId, noteId, blobId: blob.id, startedAt, duration, mime: blob.mime, deleted: false, transcript,
     title: 'Gravação ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
   });
   await db.delRange('chunks', IDBKeyRange.bound([recId, -Infinity], [recId, Infinity]));
   await db.delMeta('activeRec');
+  await db.delMeta('activeRecTranscript');
   return rec;
 }
 
@@ -86,7 +131,8 @@ export async function recoverRecordings() {
   if (!meta) return 0;
   const exists = await db.get('recordings', meta.id);
   if (exists) { await db.delMeta('activeRec'); return 0; }
-  const r = await finalize(meta.id, meta.noteId, meta.startedAt, meta.mime, 0);
+  const tr = await db.getMeta('activeRecTranscript');
+  const r = await finalize(meta.id, meta.noteId, meta.startedAt, meta.mime, 0, tr?.id === meta.id ? tr.segs : []);
   return r ? 1 : 0;
 }
 
