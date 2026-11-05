@@ -1,8 +1,8 @@
 // IndexedDB: armazenamento local (fonte da verdade no iPad)
 
 const DB_NAME = 'anota';
-const VERSION = 1;
-const SYNCED = ['subjects', 'notes', 'pages', 'items', 'recordings', 'blobs'];
+const VERSION = 2;
+const SYNCED = ['subjects', 'notes', 'pages', 'items', 'recordings', 'blobs', 'decks', 'fnotes', 'fcards', 'revlog'];
 
 let dbp = null;
 
@@ -10,17 +10,29 @@ export function openDB() {
   if (dbp) return dbp;
   dbp = new Promise((resolve, reject) => {
     const r = indexedDB.open(DB_NAME, VERSION);
-    r.onupgradeneeded = () => {
+    r.onupgradeneeded = ev => {
       const db = r.result;
-      for (const name of SYNCED) {
+      const old = ev.oldVersion;
+      const mk = (name, idx = []) => {
         const s = db.createObjectStore(name, { keyPath: 'id' });
         s.createIndex('dirty', '_dirty');
-        if (name !== 'subjects' && name !== 'notes') s.createIndex('noteId', 'noteId');
+        for (const i of idx) s.createIndex(i, i);
+      };
+      if (old < 1) {
+        mk('subjects'); mk('notes');
+        for (const name of ['pages', 'items', 'recordings', 'blobs']) mk(name, ['noteId']);
+        db.createObjectStore('files', { keyPath: 'id' });
+        const c = db.createObjectStore('chunks', { keyPath: ['recId', 'seq'] });
+        c.createIndex('recId', 'recId');
+        db.createObjectStore('meta', { keyPath: 'key' });
       }
-      db.createObjectStore('files', { keyPath: 'id' });
-      const c = db.createObjectStore('chunks', { keyPath: ['recId', 'seq'] });
-      c.createIndex('recId', 'recId');
-      db.createObjectStore('meta', { keyPath: 'key' });
+      if (old < 2) {
+        // Flashcards: baralhos, "notas" de carta (conteúdo), cartas (agendamento) e histórico de revisões
+        mk('decks');
+        mk('fnotes', ['deckId']);
+        mk('fcards', ['deckId', 'fnoteId']);
+        mk('revlog', ['cardId', 'day']);
+      }
     };
     r.onsuccess = () => {
       const db = r.result;
