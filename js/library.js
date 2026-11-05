@@ -12,8 +12,24 @@ import * as audio from './audio.js';
 import { prepareImage } from './editor.js';
 import { showWelcome, showHelp } from './help.js';
 
-const SUBJECT_COLORS = ['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
-export const APP_VERSION = '1.2.1';
+// Segurar o dedo (~0,5 s) abre o menu, sem disparar o toque normal
+function longPress(node, fn) {
+  let t = null, sx = 0, sy = 0, fired = false;
+  node.addEventListener('pointerdown', e => {
+    fired = false; sx = e.clientX; sy = e.clientY;
+    clearTimeout(t);
+    t = setTimeout(() => { fired = true; navigator.vibrate?.(10); fn(); }, 520);
+  });
+  const cancel = () => clearTimeout(t);
+  node.addEventListener('pointermove', e => { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel(); });
+  node.addEventListener('pointerup', cancel);
+  node.addEventListener('pointercancel', cancel);
+  node.addEventListener('click', e => { if (fired) { e.stopPropagation(); e.preventDefault(); fired = false; } }, true);
+  node.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+const SUBJECT_COLORS =['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
+export const APP_VERSION = '1.2.2';
 const NONE = '__none';
 
 export class Library {
@@ -133,15 +149,17 @@ export class Library {
         class: 'chev' + (open ? ' open' : '') + (topics.length ? '' : ' no-topics'), title: open ? 'Recolher' : 'Mostrar temas',
         onclick: e => { e.stopPropagation(); open ? this.expanded.delete(m.id) : this.expanded.add(m.id); savePref('expanded', [...this.expanded]); this.renderSidebar(); },
       }, icon('chevron', 14));
-      const more = iconBtn('more', 'Opções da matéria', e => { e.stopPropagation(); this.subjectMenu(e.currentTarget, m); }, 'small ghost');
+      const more = iconBtn('more', 'Opções da matéria', e => { e.stopPropagation(); this.subjectMenu(e.currentTarget, m); }, 'side-more');
       const r = row({ label: m.name, color: this.colorOf(m), active: v.type === 'subject' && v.subjectId === m.id, count: this.countIn(m.id), extra: more, onClick: () => this.setView({ type: 'subject', subjectId: m.id }) });
       r.prepend(chev);
+      longPress(r, () => this.subjectMenu(more, m));
       list.append(r);
       if (open) {
         for (const t of topics) {
-          const tmore = iconBtn('more', 'Opções do tema', e => { e.stopPropagation(); this.topicMenu(e.currentTarget, t); }, 'small ghost');
+          const tmore = iconBtn('more', 'Opções do tema', e => { e.stopPropagation(); this.topicMenu(e.currentTarget, t); }, 'side-more');
           const tr = row({ label: t.name, ic: 'tag', cls: 'child', active: v.type === 'topic' && v.subjectId === t.id, count: live.filter(n => n.subjectId === t.id).length, extra: tmore, onClick: () => this.setView({ type: 'topic', subjectId: t.id }) });
           tr.querySelector('svg').style.color = this.colorOf(m);
+          longPress(tr, () => this.topicMenu(tmore, t));
           list.append(tr);
         }
         list.append(el('div', { class: 'side-row child add', onclick: () => this.newTopic(m) }, icon('plus', 16), el('span', { class: 'side-label' }, 'Novo tema')));
@@ -191,10 +209,21 @@ export class Library {
     return t;
   }
 
+  async renameSubject(s) {
+    const topic = this.isTopic(s);
+    const n = await promptText(topic ? 'Renomear tema' : 'Renomear matéria', s.name, { ok: 'Salvar' });
+    if (!n || n === s.name) return;
+    s.name = n;
+    await store.save('subject', s);
+    toast(`Renomeado para "${n}".`);
+    this.refresh();
+  }
+
   subjectMenu(anchor, m) {
     menu(anchor, [
-      { label: 'Novo tema', icon: 'plus', onClick: () => this.newTopic(m) },
-      { label: 'Renomear', icon: 'text', onClick: async () => { const n = await promptText('Renomear matéria', m.name); if (n) { m.name = n; await store.save('subject', m); this.refresh(); } } },
+      { header: m.name },
+      { label: 'Renomear', icon: 'pen', onClick: () => this.renameSubject(m) },
+      { label: 'Novo tema dentro desta matéria', icon: 'plus', onClick: () => this.newTopic(m) },
       { label: 'Mudar cor', icon: 'palette', onClick: () => this.pickColor(m) },
       { sep: true },
       { label: 'Excluir matéria', icon: 'trash', danger: true, onClick: async () => {
@@ -213,7 +242,8 @@ export class Library {
   topicMenu(anchor, t) {
     const parent = this.byId.get(t.parentId);
     menu(anchor, [
-      { label: 'Renomear', icon: 'text', onClick: async () => { const n = await promptText('Renomear tema', t.name); if (n) { t.name = n; await store.save('subject', t); this.refresh(); } } },
+      { header: t.name },
+      { label: 'Renomear', icon: 'pen', onClick: () => this.renameSubject(t) },
       this.materias.length > 1 ? { label: 'Mover para outra matéria', icon: 'folder', onClick: () => this.moveTopic(t) } : null,
       { sep: true },
       { label: 'Excluir tema', icon: 'trash', danger: true, onClick: async () => {
@@ -338,7 +368,12 @@ export class Library {
       titleEl.append(el('button', { class: 'crumb', onclick: () => this.setView({ type: 'subject', subjectId: info.parent.id }) },
         el('span', { class: 'subj-dot', style: { background: this.colorOf(info.parent) } }), info.parent.name), el('span', { class: 'crumb-sep' }, icon('chevron', 18)));
     } else if (info.color) titleEl.append(el('span', { class: 'subj-dot big', style: { background: info.color } }));
-    titleEl.append(el('span', {}, info.title));
+    const subj = (v.type === 'subject' || v.type === 'topic') ? this.byId.get(v.subjectId) : null;
+    if (subj) {
+      // toque no nome para renomear + botão de opções sempre visível
+      titleEl.append(el('button', { class: 'title-edit', title: 'Renomear', onclick: () => this.renameSubject(subj) }, el('span', {}, info.title), icon('pen', 18)));
+      actions.prepend(el('button', { class: 'btn', onclick: e => (this.isTopic(subj) ? this.topicMenu(e.currentTarget, subj) : this.subjectMenu(e.currentTarget, subj)) }, icon('more', 18), 'Opções'));
+    } else titleEl.append(el('span', {}, info.title));
     m.append(el('header', { class: 'lib-head' },
       iconBtn('menu', 'Matérias', () => this.root.classList.toggle('side-open'), 'only-narrow'), titleEl, actions));
     const banner = await this.banner();
@@ -738,7 +773,7 @@ export class Library {
       el('p', { class: 'small' }, 'Status: ', labels[st.status] || st.status, st.pending ? ` · ${st.pending} alterações para enviar` : ''),
       el('p', { class: 'small' }, 'Última sincronização: ' + (st.lastSync ? fmtDate(st.lastSync) : 'ainda não')),
       el('div', { class: 'row-btns' },
-        el('button', { class: 'btn primary', onclick: async () => { await sync.syncNow(); redraw(); } }, icon('sync', 18), 'Sincronizar agora'),
+        el('button', { class: 'btn primary', onclick: async () => { await sync.syncNow(true); redraw(); } }, icon('sync', 18), 'Sincronizar agora'),
         el('button', { class: 'btn', onclick: async () => {
           if (!await confirmBox('Sair da conta?', 'Suas notas continuam neste iPad, mas param de ir para a nuvem.', { ok: 'Sair' })) return;
           await sync.signOut(); redraw();
