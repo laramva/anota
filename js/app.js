@@ -46,7 +46,23 @@ async function route() {
 
 function queueRoute() { routing = routing.then(route, route); }
 
+// Chegou pelo link do e-mail de confirmação: avisa e limpa o endereço
+function handleAuthReturn() {
+  const h = location.hash;
+  if (!/access_token=|error_description=|type=signup/.test(h)) return;
+  const params = new URLSearchParams(h.slice(1));
+  const err = params.get('error_description');
+  history.replaceState(null, '', location.pathname + '#/');
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  const msg = err
+    ? (/expired|invalid/i.test(err) ? 'Esse link já foi usado ou expirou. Se você já confirmou antes, é só entrar com seu e-mail e senha.' : 'Erro na confirmação: ' + err)
+    : 'E-mail confirmado!';
+  const next = standalone ? 'Agora vá em Ajustes e toque em Entrar.' : 'Agora feche o Safari, abra o Anota pelo ícone da Tela de Início, vá em Ajustes e toque em Entrar.';
+  setTimeout(() => toast(msg + ' ' + next, { timeout: 15000, kind: err && !/expired|invalid/i.test(err) ? 'error' : '' }), 600);
+}
+
 async function main() {
+  handleAuthReturn();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     try {
       const reg = await navigator.serviceWorker.register('sw.js');
