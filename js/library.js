@@ -3,7 +3,7 @@
 import * as db from './db.js';
 import * as store from './store.js';
 import * as sync from './sync.js';
-import { el, fmtDate, fmtBytes, loadPref, savePref, isIPad, now } from './util.js';
+import { el, fmtDate, fmtBytes, loadPref, savePref, isIPad, now, defaultPaper } from './util.js';
 import { icon, iconBtn, toast, menu, modal, promptText, confirmBox, pickFile, busy, applyTheme } from './ui.js';
 import { importPdfAsNote, exportNotePdf, shareOrDownload, exportBackup, importBackup } from './export.js';
 import { TEMPLATES, PAPER_COLORS } from './render.js';
@@ -13,7 +13,7 @@ import { prepareImage } from './editor.js';
 import { showWelcome, showHelp } from './help.js';
 
 const SUBJECT_COLORS = ['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.2.1';
 const NONE = '__none';
 
 export class Library {
@@ -408,7 +408,7 @@ export class Library {
     const d = new Date();
     const note = await store.createNote({
       title: 'Aula ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      subjectId, template: loadPref('defaultTemplate', 'lined'), paperColor: loadPref('defaultPaper', '#ffffff'),
+      subjectId, template: loadPref('defaultTemplate', 'lined'), paperColor: defaultPaper(),
     });
     try { await audio.startRecording(note.id); toast('Gravando a aula. Escreva normalmente: cada anotação fica ligada ao momento do áudio.'); }
     catch (e) { toast(e.name === 'NotAllowedError' ? 'Permita o microfone em Ajustes do iPad › Safari › Microfone.' : 'Não foi possível gravar: ' + e.message, { kind: 'error', timeout: 7000 }); }
@@ -423,7 +423,7 @@ export class Library {
     const b = busy('Preparando a imagem…');
     try {
       const d = new Date();
-      const note = await store.createNote({ title: 'Foto ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), subjectId, template: 'blank' });
+      const note = await store.createNote({ title: 'Foto ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), subjectId, template: 'blank', paperColor: defaultPaper() });
       const [page] = await store.getPages(note.id);
       const { data, mime, w, h } = await prepareImage(file);
       const blob = await store.createBlob({ noteId: note.id, data, mime, name: file.name });
@@ -524,7 +524,7 @@ export class Library {
   async newNote(forcedSubject) {
     const subjectId = await this.targetFor(forcedSubject);
     if (subjectId === undefined) return;
-    const tpl = loadPref('defaultTemplate', 'lined'), col = loadPref('defaultPaper', '#ffffff');
+    const tpl = loadPref('defaultTemplate', 'lined'), col = defaultPaper();
     const d = new Date();
     const note = await store.createNote({
       title: 'Nota ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
@@ -657,8 +657,22 @@ export class Library {
         el('p', { class: 'muted small' }, 'Atenção: se você apagar o ícone do app da Tela de Início, o iPad apaga os dados locais junto. Com a nuvem ligada, é só entrar de novo que tudo volta.')));
       const tplSel = el('select', { class: 'field' }, ...TEMPLATES.map(t => el('option', { value: t.id, selected: loadPref('defaultTemplate', 'lined') === t.id }, t.name)));
       tplSel.addEventListener('change', () => savePref('defaultTemplate', tplSel.value));
-      const colSel = el('select', { class: 'field' }, ...PAPER_COLORS.map(c => el('option', { value: c.c, selected: loadPref('defaultPaper', '#ffffff') === c.c }, c.name)));
-      colSel.addEventListener('change', () => savePref('defaultPaper', colSel.value));
+      const chosen = loadPref('defaultPaper', null);
+      const colSel = el('select', { class: 'field' }, el('option', { value: '', selected: !chosen }, 'Igual ao tema do app'),
+        ...PAPER_COLORS.map(c => el('option', { value: c.c, selected: chosen === c.c }, c.name)));
+      colSel.addEventListener('change', () => savePref('defaultPaper', colSel.value || null));
+      const darkAll = el('button', { class: 'btn small', onclick: async () => {
+        const col = colSel.value || defaultPaper();
+        const name = PAPER_COLORS.find(c => c.c === col)?.name || 'escolhida';
+        if (!await confirmBox(`Usar o papel "${name}" em todas as notas?`, 'Muda a cor das folhas das notas que já existem (PDFs continuam como são). O que você escreveu não muda; a tinta preta fica clara no papel escuro.', { ok: 'Aplicar' })) return;
+        const pages = (await db.getAll('pages')).filter(p => !p.deleted && !p.pdf && p.paperColor !== col);
+        for (const p of pages) p.paperColor = col;
+        await store.saveMany('page', pages);
+        const ids = new Set(pages.map(p => p.noteId));
+        for (const n of this.notes.filter(n => ids.has(n.id))) { n.thumb = null; await store.save('note', n); }
+        toast(`${pages.length} página(s) atualizadas.`);
+        this.refresh();
+      } }, 'Aplicar às notas que já existem');
       const themeSel = el('select', { class: 'field' }, ...[['dark', 'Escuro'], ['light', 'Claro'], ['auto', 'Automático (igual ao iPad)']].map(([v, l]) => el('option', { value: v, selected: loadPref('theme', 'dark') === v }, l)));
       themeSel.addEventListener('change', () => { savePref('theme', themeSel.value); applyTheme(themeSel.value); });
       const finger = el('input', { type: 'checkbox' });
@@ -673,7 +687,8 @@ export class Library {
         el('h4', {}, 'Aparência e escrita'),
         el('label', { class: 'field-row' }, el('span', {}, 'Tema do app'), themeSel),
         el('label', { class: 'field-row' }, el('span', {}, 'Papel padrão das notas novas'), tplSel),
-        el('label', { class: 'field-row' }, el('span', {}, 'Cor do papel padrão'), colSel),
+        el('label', { class: 'field-row' }, el('span', {}, 'Cor do papel das notas novas'), colSel),
+        el('div', { class: 'field-row' }, el('span', { class: 'muted small' }, 'Quer mudar também as notas antigas?'), darkAll),
         el('label', { class: 'field-row' }, el('span', {}, 'Desenhar com o dedo (desligado = só o Apple Pencil escreve)'), finger),
         el('label', { class: 'field-row' }, el('span', {}, 'Transcrever o áudio ao gravar (precisa de internet)'), trans),
         el('label', { class: 'field-row' }, el('span', {}, 'Idioma da transcrição'), tlang),
