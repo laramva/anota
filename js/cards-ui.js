@@ -9,6 +9,7 @@ import { icon, iconBtn, toast, menu, modal, promptText, confirmBox, pickFile, bu
 import { getStroke } from '../vendor/perfect-freehand.mjs';
 import * as R from './render.js';
 import { shareOrDownload } from './export.js';
+import * as auto from './autocards.js';
 
 // ---------- Utilidades ----------
 const urlCache = new Map();
@@ -73,7 +74,7 @@ export class CardsSection {
   dueTotal() { return (this.decks || []).reduce((s, d) => s + this.dueOf(d), 0); }
   async go(v) {
     this.view = v; savePref('cardsView', v);
-    this.query = ''; this.filter = 'all';
+    this.query = ''; this.filter = v.auto ? 'auto' : 'all';
     this.lib.root.classList.remove('side-open');
     await this.load();
     this.lib.renderSidebar(); this.lib.renderMain();
@@ -135,6 +136,20 @@ export class CardsSection {
         el('div', {}, icon('brain', 20), el('b', {}, st.retention == null ? '—' : Math.round(st.retention * 100) + '%'), el('span', { class: 'muted small' }, 'de acerto (30 dias)'))),
       total ? el('button', { class: 'btn primary big', onclick: () => this.study(this.decks) }, icon('play', 18), 'Estudar tudo agora') : null);
     m.append(hero);
+    // status dos flashcards automáticos
+    const last = await auto.lastRun();
+    const autoCount = (await C.allFnotes()).filter(f => f.auto).length;
+    m.append(el('div', { class: 'auto-card' },
+      el('span', { class: 'qa-ico c-purple' }, icon('sparkle', 22)),
+      el('div', { class: 'auto-txt' },
+        el('b', {}, 'Flashcards automáticos ' + (auto.isEnabled() ? '· ligados' : '· desligados')),
+        el('p', { class: 'muted small' }, last
+          ? `Última leitura: ${fmtDate(last.at)} · ${last.cards} carta(s) nova(s)` + (autoCount ? ` · ${autoCount} no total` : '') + (last.error ? ` · aviso: ${last.error}` : '')
+          : 'O app cria cartas sozinho do que você marca com marca-texto nos PDFs, do "termo: definição" nas caixas de texto e, com a chave grátis do Google, da sua letra à mão.'),
+        !auto.getKey() ? el('p', { class: 'small' }, 'Para ler também a letra à mão: ', el('button', { class: 'link-btn', onclick: () => this.lib.openSettings() }, 'adicionar chave grátis')) : null),
+      el('div', { class: 'row-btns' },
+        autoCount ? el('button', { class: 'btn small', onclick: () => this.go({ type: 'browse', auto: true }) }, 'Ver automáticas') : null,
+        el('button', { class: 'btn small primary', disabled: auto.isRunning(), onclick: () => this.lib.runAuto(true) }, icon('sparkle', 16), auto.isRunning() ? 'Lendo…' : 'Gerar agora'))));
     if (!this.decks.length) {
       m.append(el('div', { class: 'fc-empty' },
         el('h3', {}, 'Como funciona'),
@@ -290,7 +305,7 @@ export class CardsSection {
   cardList(cards, fnotes, { deck, showDeck } = {}) {
     const wrap = el('div', { class: 'card-list-wrap' });
     const search = el('input', { type: 'search', class: 'search', placeholder: 'Buscar nas cartas…', value: this.query });
-    const filters = [['all', 'Todas'], ['new', 'Novas'], ['learn', 'Aprendendo'], ['review', 'Revisão'], ['flag', 'Marcadas'], ['susp', 'Suspensas']];
+    const filters = [['all', 'Todas'], ['auto', '✨ Automáticas'], ['new', 'Novas'], ['learn', 'Aprendendo'], ['review', 'Revisão'], ['flag', 'Marcadas'], ['susp', 'Suspensas']];
     const seg = el('div', { class: 'chips' });
     const list = el('div', { class: 'card-list' });
     const draw = () => {
@@ -305,6 +320,7 @@ export class CardsSection {
         if (f === 'review' && (c.state !== STATE.REVIEW || c.suspended)) return false;
         if (f === 'flag' && !c.flag) return false;
         if (f === 'susp' && !c.suspended) return false;
+        if (f === 'auto' && !fnotes.get(c.fnoteId)?.auto) return false;
         if (q) { const fn = fnotes.get(c.fnoteId); if (!fn) return false; const t = (C.htmlToText(fn.front) + ' ' + C.htmlToText(fn.back) + ' ' + (fn.tags || []).join(' ')).toLowerCase(); if (!t.includes(q)) return false; }
         return true;
       }).sort((a, b) => a.createdAt - b.createdAt);
