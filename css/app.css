@@ -522,6 +522,18 @@ select.field { width: auto; min-width: 160px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 
+/* Flashcards automáticos */
+.auto-card { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin: -6px 0 20px; }
+.auto-txt { flex: 1 1 280px; min-width: 0; }
+.auto-txt p { margin: 3px 0 0; }
+.link-btn { color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.auto-list { margin: 6px 0 10px; padding-left: 18px; }
+.auto-list li { margin: 4px 0; }
+.auto-key { background: var(--soft); border-radius: 12px; padding: 10px 14px; margin: 8px 0; }
+.auto-key summary { font-weight: 600; cursor: pointer; padding: 2px 0; }
+.auto-key ol { margin: 8px 0; padding-left: 18px; }
+.auto-key a { color: var(--accent); }
+
 /* Editor de carta */
 .card-editor { display: flex; flex-direction: column; gap: 10px; }
 .ce-row { display: flex; gap: 12px; flex-wrap: wrap; }
