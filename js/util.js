@@ -85,6 +85,11 @@ export const isIPad = () => /iPad/.test(navigator.userAgent) || (navigator.platf
 export function loadPref(key, def) {
   try { const v = localStorage.getItem('anota:' + key); return v == null ? def : JSON.parse(v); } catch { return def; }
 }
+// Cor do papel das notas novas: segue o tema (escuro = folha escura), a menos que a pessoa escolha outra
+export function defaultPaper() {
+  return loadPref('defaultPaper', null) || (document.documentElement.dataset.theme === 'dark' ? '#2a2c31' : '#ffffff');
+}
+
 export function savePref(key, v) {
   try { localStorage.setItem('anota:' + key, JSON.stringify(v)); } catch { }
 }
