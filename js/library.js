@@ -7,9 +7,13 @@ import { el, fmtDate, fmtBytes, loadPref, savePref, isIPad, now } from './util.j
 import { icon, iconBtn, toast, menu, modal, promptText, confirmBox, pickFile, busy, applyTheme } from './ui.js';
 import { importPdfAsNote, exportNotePdf, shareOrDownload, exportBackup, importBackup } from './export.js';
 import { TEMPLATES, PAPER_COLORS } from './render.js';
+import { CardsSection, openCardEditor } from './cards-ui.js';
+import * as audio from './audio.js';
+import { prepareImage } from './editor.js';
+import { showWelcome, showHelp } from './help.js';
 
 const SUBJECT_COLORS = ['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
-export const APP_VERSION = '1.1.2';
+export const APP_VERSION = '1.2.0';
 const NONE = '__none';
 
 export class Library {
@@ -21,6 +25,17 @@ export class Library {
     this.expanded = new Set(loadPref('expanded', []));
     this.query = '';
     this.unsubs = [];
+    this.section = loadPref('section', 'notes');
+    this.cards = new CardsSection(this);
+  }
+
+  async setSection(s) {
+    this.section = s;
+    savePref('section', s);
+    this.root.classList.remove('side-open');
+    await this.cards.load();
+    this.renderSidebar();
+    this.renderMain();
   }
 
   async init() {
@@ -34,6 +49,7 @@ export class Library {
       sync.syncBus.on('status', () => this.renderSyncChip()),
     );
     await this.refresh();
+    if (!loadPref('welcomed', false)) { savePref('welcomed', true); showWelcome(this); }
   }
 
   destroy() { this.unsubs.forEach(f => f()); }
@@ -46,6 +62,7 @@ export class Library {
     this.materias = this.subjects.filter(s => !s.parentId || !this.byId.has(s.parentId));
     const v = this.view;
     if ((v.type === 'subject' || v.type === 'topic') && !this.byId.has(v.subjectId)) this.view = { type: 'recent' };
+    await this.cards.load();
     this.renderSidebar();
     await this.renderMain();
   }
@@ -90,6 +107,17 @@ export class Library {
         count != null ? el('span', { class: 'count' }, count) : null, extra);
 
     s.append(el('div', { class: 'brand' }, el('img', { src: 'icons/icon-192.png', alt: '' }), el('span', {}, 'Anota')));
+    const due = this.cards.dueTotal();
+    s.append(el('div', { class: 'seg-tabs' },
+      el('button', { class: this.section === 'notes' ? 'active' : '', onclick: () => this.setSection('notes') }, icon('notes', 18), 'Notas'),
+      el('button', { class: this.section === 'cards' ? 'active' : '', onclick: () => this.setSection('cards') }, icon('cards', 18), 'Flashcards', due ? el('span', { class: 'badge' }, due > 99 ? '99+' : due) : null)));
+    if (this.section === 'cards') {
+      this.cards.renderSidebar(s, row);
+      this.syncChip = el('button', { class: 'sync-chip', onclick: () => this.openSettings() });
+      s.append(el('div', { class: 'side-foot' }, this.syncChip, iconBtn('help', 'Como usar', () => showHelp(this)), iconBtn('gear', 'Ajustes', () => this.openSettings())));
+      this.renderSyncChip();
+      return;
+    }
     s.append(
       row({ label: 'Recentes', ic: 'clock', active: v.type === 'recent', onClick: () => this.setView({ type: 'recent' }) }),
       row({ label: 'Favoritas', ic: 'star', active: v.type === 'starred', count: live.filter(n => n.starred).length || null, onClick: () => this.setView({ type: 'starred' }) }),
@@ -124,7 +152,7 @@ export class Library {
     const trashed = this.notes.filter(n => n.trashed).length;
     s.append(row({ label: 'Lixeira', ic: 'trash', active: v.type === 'trash', count: trashed || null, onClick: () => this.setView({ type: 'trash' }) }));
     this.syncChip = el('button', { class: 'sync-chip', onclick: () => this.openSettings() });
-    s.append(el('div', { class: 'side-foot' }, this.syncChip, iconBtn('gear', 'Ajustes', () => this.openSettings())));
+    s.append(el('div', { class: 'side-foot' }, this.syncChip, iconBtn('help', 'Como usar', () => showHelp(this)), iconBtn('gear', 'Ajustes', () => this.openSettings())));
     this.renderSyncChip();
   }
 
@@ -283,6 +311,12 @@ export class Library {
   async renderMain() {
     const m = this.main;
     const keepFocus = document.activeElement?.classList.contains('search');
+    if (this.section === 'cards') {
+      const holder = el('div', {});
+      await this.cards.renderMain(holder);
+      m.replaceChildren(...holder.childNodes);
+      return;
+    }
     m.innerHTML = '';
     const v = this.view;
     const info = this.viewInfo();
@@ -332,7 +366,9 @@ export class Library {
     }
     const live = this.live();
     if (v.type === 'recent') {
+      b.append(this.quickActions());
       const list = [...live].sort((a, c) => (c.lastOpenedAt || c.updatedAt) - (a.lastOpenedAt || a.updatedAt)).slice(0, 40);
+      if (list.length) b.append(el('h3', { class: 'sub-h' }, 'Abertas recentemente'));
       if (!this.materias.length && live.length) b.append(this.tip());
       b.append(this.grid(list, { showPath: true, empty: 'Nenhuma nota ainda. Toque em "Nova nota" ou importe um PDF.' }));
     } else if (v.type === 'starred') {
@@ -350,6 +386,52 @@ export class Library {
       if (!this.materias.length && live.length) b.append(this.tip());
       b.append(this.grid(this.sortList([...live]), { showPath: true, empty: 'Nenhuma nota ainda. Toque em "Nova nota" ou importe um PDF.' }));
     }
+  }
+
+  // Atalhos para tudo que o app faz (além de anotar)
+  quickActions() {
+    const due = this.cards.dueTotal();
+    const tile = (ic, title, desc, onClick, cls = '') => el('button', { class: 'qa-tile ' + cls, onclick: onClick },
+      el('span', { class: 'qa-ico' }, icon(ic, 24)), el('span', { class: 'qa-title' }, title), el('span', { class: 'qa-desc' }, desc));
+    return el('div', { class: 'qa-grid' },
+      tile('pen', 'Nova nota', 'Escreva à mão com o Apple Pencil', () => this.newNote(), 'c-blue'),
+      tile('mic', 'Gravar aula', 'Áudio + transcrição ligados ao que você escreve', () => this.recordLecture(), 'c-red'),
+      tile('file', 'Importar PDF', 'Slides e apostilas para anotar por cima', () => this.importPdf(), 'c-orange'),
+      tile('camera', 'Foto ou imagem', 'Foto do quadro, do livro ou da galeria', () => this.photoNote(), 'c-green'),
+      tile('cards', due ? `Flashcards (${due})` : 'Flashcards', due ? `${due} cartas para revisar hoje` : 'Memorize com repetição espaçada', () => this.setSection('cards'), 'c-purple'),
+      tile('help', 'Como usar', 'Todas as funções explicadas', () => showHelp(this), 'c-gray'));
+  }
+
+  async recordLecture() {
+    const subjectId = await this.targetFor();
+    if (subjectId === undefined) return;
+    const d = new Date();
+    const note = await store.createNote({
+      title: 'Aula ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      subjectId, template: loadPref('defaultTemplate', 'lined'), paperColor: loadPref('defaultPaper', '#ffffff'),
+    });
+    try { await audio.startRecording(note.id); toast('Gravando a aula. Escreva normalmente: cada anotação fica ligada ao momento do áudio.'); }
+    catch (e) { toast(e.name === 'NotAllowedError' ? 'Permita o microfone em Ajustes do iPad › Safari › Microfone.' : 'Não foi possível gravar: ' + e.message, { kind: 'error', timeout: 7000 }); }
+    this.openNote(note.id);
+  }
+
+  async photoNote() {
+    const file = await pickFile('image/*');
+    if (!file) return;
+    const subjectId = await this.targetFor();
+    if (subjectId === undefined) return;
+    const b = busy('Preparando a imagem…');
+    try {
+      const d = new Date();
+      const note = await store.createNote({ title: 'Foto ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }), subjectId, template: 'blank' });
+      const [page] = await store.getPages(note.id);
+      const { data, mime, w, h } = await prepareImage(file);
+      const blob = await store.createBlob({ noteId: note.id, data, mime, name: file.name });
+      const iw = page.w - 120, ih = Math.min(page.h - 120, iw * h / w), iw2 = ih * w / h;
+      await store.save('item', { id: crypto.randomUUID(), type: 'image', noteId: note.id, pageId: page.id, x: (page.w - iw2) / 2, y: 60, w: iw2, h: ih, blobId: blob.id, z: now(), deleted: false });
+      b.close();
+      this.openNote(note.id);
+    } catch (e) { b.close(); toast('Não consegui usar a imagem: ' + e.message, { kind: 'error' }); }
   }
 
   tip() {
@@ -582,22 +664,20 @@ export class Library {
       const finger = el('input', { type: 'checkbox' });
       finger.checked = loadPref('fingerDraw', false);
       finger.addEventListener('change', () => savePref('fingerDraw', finger.checked));
+      const trans = el('input', { type: 'checkbox' });
+      trans.checked = loadPref('transcribe', true);
+      trans.addEventListener('change', () => savePref('transcribe', trans.checked));
+      const tlang = el('select', { class: 'field' }, ...[['pt-BR', 'Português'], ['en-US', 'Inglês'], ['es-ES', 'Espanhol'], ['fr-FR', 'Francês']].map(([v, l]) => el('option', { value: v, selected: loadPref('transcribeLang', 'pt-BR') === v }, l)));
+      tlang.addEventListener('change', () => savePref('transcribeLang', tlang.value));
       box.append(el('section', {},
         el('h4', {}, 'Aparência e escrita'),
         el('label', { class: 'field-row' }, el('span', {}, 'Tema do app'), themeSel),
         el('label', { class: 'field-row' }, el('span', {}, 'Papel padrão das notas novas'), tplSel),
         el('label', { class: 'field-row' }, el('span', {}, 'Cor do papel padrão'), colSel),
         el('label', { class: 'field-row' }, el('span', {}, 'Desenhar com o dedo (desligado = só o Apple Pencil escreve)'), finger),
-        el('div', { class: 'tips' },
-          el('b', {}, 'Gestos'),
-          el('ul', {},
-            el('li', {}, 'Toque com 2 dedos: desfazer · com 3 dedos: refazer'),
-            el('li', {}, '1 dedo: rolar · pinça com 2 dedos: zoom'),
-            el('li', {}, 'Desenhe e segure a caneta parada: vira linha, círculo, retângulo ou triângulo perfeitos'),
-            el('li', {}, 'Toque de novo na ferramenta ativa: escolher cor e espessura'),
-            el('li', {}, 'Botão de páginas (ao lado do título): ver miniaturas, pular e reordenar páginas'),
-            el('li', {}, 'Com uma gravação aberta, toque numa anotação para ouvir aquele momento'),
-            el('li', {}, 'Na caixa de texto, você pode escrever à mão com o Pencil (Rabiscar) que vira texto')))));
+        el('label', { class: 'field-row' }, el('span', {}, 'Transcrever o áudio ao gravar (precisa de internet)'), trans),
+        el('label', { class: 'field-row' }, el('span', {}, 'Idioma da transcrição'), tlang),
+        el('div', { class: 'row-btns' }, el('button', { class: 'btn', onclick: () => { m.close(); showHelp(this); } }, icon('help', 18), 'Ver como usar todas as funções'))));
       box.append(el('p', { class: 'muted small center' }, `Anota ${APP_VERSION}`));
     };
     draw();
