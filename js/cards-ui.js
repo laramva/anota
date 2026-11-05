@@ -182,6 +182,7 @@ export class CardsSection {
   deckMenu(anchor, d) {
     menu(anchor, [
       { label: 'Abrir', icon: 'cards', onClick: () => this.go({ type: 'deck', deckId: d.id }) },
+      { label: 'Renomear', icon: 'pen', onClick: async () => { const n = await promptText('Renomear baralho', d.name, { ok: 'Salvar' }); if (n && n !== d.name) { d.name = n; await store.save('deck', d); toast(`Renomeado para "${n}".`); this.refresh(); } } },
       { label: 'Nova carta', icon: 'plus', onClick: () => openCardEditor({ lib: this.lib, deckId: d.id, onSaved: () => this.refresh() }) },
       { label: 'Importar cartas', icon: 'upload', onClick: () => this.openImport(d.id) },
       { label: 'Opções e limites', icon: 'gear', onClick: () => this.deckOptions(d) },
@@ -827,7 +828,7 @@ class Study {
         this.done ? el('p', {}, `${this.done} carta(s) em ${mins} min · ${pct}% de acerto`) : null,
         learnLeft ? el('p', { class: 'muted' }, `Ainda há ${learnLeft} carta(s) em aprendizado. Elas voltam em alguns minutos: abra o estudo de novo daqui a pouco.`) : el('p', { class: 'muted' }, 'O app vai te mostrar cada carta de novo na hora certa.'),
         el('div', { class: 'row-btns center' },
-          !this.cram ? el('button', { class: 'btn', onclick: async () => { for (const d of this.decks) { d.opts = { ...(d.opts || {}), newPerDay: C.deckOpts(d).newPerDay + 10 }; await store.save('deck', d); } this.q = await C.buildQueue(this.decks); this.next(); } }, '+10 cartas novas hoje') : null,
+          !this.cram ? el('button', { class: 'btn', onclick: async () => { for (const d of this.decks) await C.addNewToday(d, 10); this.q = await C.buildQueue(this.decks); this.next(); } }, '+10 cartas novas hoje') : null,
           el('button', { class: 'btn primary', onclick: () => this.close() }, 'Concluir'))));
   }
 }
