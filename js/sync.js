@@ -18,6 +18,11 @@ let running = false, again = false, timer = null, lastDirty = 0, pendT = null;
 function pendingSoon() { clearTimeout(pendT); pendT = setTimeout(updatePending, 2500); }
 const downloads = new Map();
 
+// fica pronto quando já se sabe se há alguém logado neste aparelho
+let markReady;
+const readyP = new Promise(r => { markReady = r; });
+export const whenReady = () => Promise.race([readyP, new Promise(r => setTimeout(r, 6000))]);
+
 export const configured = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 export const getUser = () => user;
 export const getState = () => ({ ...state, user });
@@ -37,7 +42,7 @@ export async function initSync() {
   // enquanto você escreve, nada de sincronizar nem contar pendências (isso roubava tempo da caneta)
   store.bus.on('dirty', () => { lastDirty = Date.now(); pendingSoon(); schedule(4000); });
   updatePending();
-  if (!configured() || !window.supabase) { setStatus('off'); return; }
+  if (!configured() || !window.supabase) { setStatus('off'); markReady(); return; }
   client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'anota-auth', detectSessionInUrl: false },
   });
@@ -57,6 +62,7 @@ export async function initSync() {
   });
   if (user) await onSignedIn();
   setStatus(user ? 'idle' : 'signed-out');
+  markReady();
   window.addEventListener('online', () => schedule(0));
   window.addEventListener('offline', () => setStatus('offline'));
   document.addEventListener('visibilitychange', () => {
@@ -88,11 +94,26 @@ export async function signIn(email, password) {
 }
 export async function signUp(email, password) {
   // Endereço exato do app (ex.: https://laramva.github.io/anota/) para o link do e-mail voltar aqui
-  const back = location.origin + location.pathname.replace(/index\.html$/, '');
-  const { data, error } = await client.auth.signUp({ email, password, options: { emailRedirectTo: back } });
+  const { data, error } = await client.auth.signUp({ email, password, options: { emailRedirectTo: appUrl() } });
   if (error) throw error;
   return { needsConfirm: !data.session };
 }
+const appUrl = () => location.origin + location.pathname.replace(/index\.html$/, '');
+
+// Esqueci a senha: manda um link por e-mail que abre o app para escolher uma senha nova
+export async function resetPassword(email) {
+  const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: appUrl() });
+  if (error) throw error;
+}
+export async function useRecoveryLink(tokens) {
+  const { error } = await client.auth.setSession(tokens);
+  if (error) throw error;
+}
+export async function updatePassword(password) {
+  const { error } = await client.auth.updateUser({ password });
+  if (error) throw error;
+}
+
 export async function signOut() {
   await syncNow(true).catch(() => { });
   await client.auth.signOut();
