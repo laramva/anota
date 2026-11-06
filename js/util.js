@@ -95,4 +95,4 @@ export function savePref(key, v) {
 }
 
 // Versão do app (aparece nos Ajustes e na verificação de sincronização)
-export const APP_VERSION = '1.3.1';
+export const APP_VERSION = '1.3.2';
