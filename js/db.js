@@ -61,6 +61,10 @@ export async function getAll(store) {
   const db = await openDB();
   return req(db.transaction(store).objectStore(store).getAll());
 }
+export async function allKeys(store) {
+  const db = await openDB();
+  return req(db.transaction(store).objectStore(store).getAllKeys());
+}
 export async function byIndex(store, index, value) {
   const db = await openDB();
   return req(db.transaction(store).objectStore(store).index(index).getAll(value));
