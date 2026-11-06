@@ -289,7 +289,7 @@ select.field { width: auto; min-width: 160px; }
 .pthumb-ghost { position: fixed; z-index: 90; pointer-events: none; opacity: 0.92; transform: rotate(-2deg) scale(1.04); box-shadow: var(--shadow); background: var(--panel); }
 .pages-tip { padding: 6px 10px 10px; margin: 0; }
 @media (max-width: 760px) { .pages-panel { position: absolute; inset: 0; width: auto; } }
-.ed-stage canvas { position: absolute; left: 0; top: 0; touch-action: none; }
+.ed-stage canvas { position: absolute; left: 0; top: 0; touch-action: none; transform: translateZ(0); will-change: transform; }
 .ed-live { pointer-events: none; }
 .ed-overlay { position: absolute; inset: 0; pointer-events: none; }
 .ed-overlay > * { pointer-events: auto; }
@@ -653,3 +653,5 @@ select.field { width: auto; min-width: 160px; }
 .login-form { display: flex; flex-direction: column; gap: 4px; }
 .login-tabs { margin-bottom: 6px; }
 .login-form .row-btns { margin-top: 6px; }
+/* relógio da gravação com largura fixa: não mexe no tamanho da área de desenho */
+.rec-btn .lbl { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
