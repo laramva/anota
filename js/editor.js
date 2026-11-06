@@ -144,7 +144,7 @@ export class Editor {
     }
     const p = store.saveMany(kind, recs).catch(e => {
       console.error(e);
-      toast('ERRO ao salvar no iPad: ' + (e?.name === 'QuotaExceededError' ? 'espaço cheio' : e?.message || e), { kind: 'error', timeout: 8000 });
+      toast('ERRO ao salvar: ' + (e?.name === 'QuotaExceededError' ? 'espaço cheio' : e?.message || e), { kind: 'error', timeout: 8000 });
     }).finally(() => this.pending.delete(p));
     this.pending.add(p);
     this.touchNote();
