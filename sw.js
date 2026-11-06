@@ -1,5 +1,5 @@
 // Service worker: deixa o app abrir e funcionar sem internet
-const VERSION = 'anota-v1.3.0';
+const VERSION = 'anota-v1.3.1';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/audio.js', 'js/autocards.js', 'js/cards.js', 'js/cards-ui.js', 'js/config.js', 'js/db.js', 'js/editor.js', 'js/export.js', 'js/help.js', 'js/library.js',
