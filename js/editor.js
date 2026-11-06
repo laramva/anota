@@ -197,7 +197,7 @@ export class Editor {
     this.body = el('div', { class: 'ed-body' }, this.stage, this.pagesPanel);
     this.playerBar = el('div', { class: 'ed-player hidden' });
     r.append(top, this.body, this.playerBar);
-    this.ctx = this.canvas.getContext('2d');
+    this.ctx = this.canvas.getContext('2d', { alpha: false }) || this.canvas.getContext('2d'); // opaca = mais rápida de compor
     // camada do traço ao vivo: pedimos ao navegador o modo de menor atraso
     this.lctx = this.liveCanvas.getContext('2d', { desynchronized: true }) || this.liveCanvas.getContext('2d');
     this.updateToolUi();
@@ -356,7 +356,15 @@ export class Editor {
   }
 
   // ---------- Renderização ----------
+  // Escrevendo (ou logo depois de levantar a caneta, entre uma letra e outra) a página nunca é
+  // redesenhada inteira: isso é o que travava a caneta em notas com muitos traços. Fica para a pausa.
+  writing() { return !!this.live || (performance.now() - (this.lastInkUp || 0) < 600 && !this.erase && !this.lasso && !this.selDrag); }
   requestRender() {
+    if (this.writing()) {
+      clearTimeout(this._deferT);
+      this._deferT = setTimeout(() => this.requestRender(), 650);
+      return;
+    }
     if (!this.rafMain) this.rafMain = requestAnimationFrame(() => this.render());
   }
   requestLive() {
@@ -464,14 +472,24 @@ export class Editor {
   renderLive() {
     this.rafLive = 0;
     const c = this.lctx, k = this.dpr * this.cam.z;
-    c.setTransform(1, 0, 0, 1, 0, 0);
-    c.clearRect(0, 0, this.liveCanvas.width, this.liveCanvas.height);
     const L = this.live;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    // apaga só a área onde o traço estava (bem mais leve que limpar a tela inteira a cada movimento)
+    const d = this._liveDirty;
+    if (d && L && !this.erase && !this.lasso) c.clearRect(d[0], d[1], d[2] - d[0], d[3] - d[1]);
+    else c.clearRect(0, 0, this.liveCanvas.width, this.liveCanvas.height);
+    this._liveDirty = null;
     if (L && L.pts.length) {
       const p = L.page;
-      c.setTransform(k, 0, 0, k, (p._ox - this.cam.x) * k, (p._oy - this.cam.y) * k);
-      c.beginPath(); c.rect(0, 0, p.w, p.h); c.clip();
       const f = new Float32Array(L.pred?.length ? L.pts.concat(L.pred) : L.pts);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let i = 0; i < f.length; i += 3) { if (f[i] < x0) x0 = f[i]; if (f[i] > x1) x1 = f[i]; if (f[i + 1] < y0) y0 = f[i + 1]; if (f[i + 1] > y1) y1 = f[i + 1]; }
+      const pad = L.size + 4 / this.cam.z;
+      const ox = (p._ox - this.cam.x) * k, oy = (p._oy - this.cam.y) * k;
+      this._liveDirty = [Math.floor((x0 - pad) * k + ox) - 2, Math.floor((y0 - pad) * k + oy) - 2, Math.ceil((x1 + pad) * k + ox) + 2, Math.ceil((y1 + pad) * k + oy) + 2];
+      c.setTransform(k, 0, 0, k, ox, oy);
+      c.save();
+      c.beginPath(); c.rect(0, 0, p.w, p.h); c.clip();
       if (L.tool === 'highlighter') {
         c.globalAlpha = 0.38;
         c.strokeStyle = L.color; c.lineWidth = L.size; c.lineCap = 'round'; c.lineJoin = 'round';
@@ -485,6 +503,7 @@ export class Editor {
         c.fillStyle = R.inkColor(L.color, !p.pdf && R.isDarkColor(p.paperColor));
         c.fill(R.outlinePath(getStroke(R.toPointArray(f), R.strokeOpts(L, true))));
       }
+      c.restore();
     }
     const E = this.erase;
     if (E && E.cursor) {
@@ -564,7 +583,8 @@ export class Editor {
       this.cancelTouchGesture(true);
     }
     if (type === 'touch') {
-      if (this.penDown || performance.now() - this.lastPenUp < 300 || (this.penSeen && e.width > 70)) { this.ignored.add(e.pointerId); return; }
+      // palma da mão: ignorada com a caneta encostada, logo depois de escrever ou se o toque for largo
+      if (this.penDown || performance.now() - this.lastPenUp < 500 || (this.penSeen && Math.max(e.width || 0, e.height || 0) > 45)) { this.ignored.add(e.pointerId); return; }
       if (!this.fingerDraw || this.touches.size > 0 || this.drawPointer != null) {
         if (this.drawPointer != null && this.drawType === 'touch') this.abortDraw();
         return this.touchDown(e);
@@ -661,6 +681,8 @@ export class Editor {
     if (!g) return;
     if (Math.hypot(pt.x - pt.sx, pt.y - pt.sy) > 10) g.moved = true;
     if (g.type === 'seldrag') { this.moveSelDrag(this.toWorld(e)); return; }
+    // zona morta: mão apoiada mexendo um pouquinho não rola nem redesenha a página
+    if (!g.moved) { if (g.type === 'pan') { g.lx = e.clientX; g.ly = e.clientY; g.lt = performance.now(); } return; }
     if (g.type === 'pan') {
       const t = performance.now();
       const dx = e.clientX - g.lx, dy = e.clientY - g.ly, dt = Math.max(1, t - g.lt);
@@ -715,9 +737,10 @@ export class Editor {
 
   cancelTouchGesture(revertPan) {
     const g = this.gesture;
-    if (g?.type === 'pan' && revertPan && (performance.now() - g.t0 < 600 || g.dist < 40)) {
+    // a palma chegou antes da caneta e rolou um pouco: volta a página (desenha já, antes do traço começar)
+    if (g?.type === 'pan' && revertPan && g.moved && (performance.now() - g.t0 < 600 || g.dist < 40)) {
       this.cam = { ...g.camStart };
-      this.requestRender();
+      this.render();
     }
     if (g?.type === 'seldrag') this.endSelDrag(true);
     for (const id of this.touches.keys()) this.ignored.add(id);
@@ -907,9 +930,10 @@ export class Editor {
     this.addMem(it);
     this.pushUndo({ type: 'add', items: [it] });
     this.persist('item', [it]);
-    // marca-texto vai por baixo da tinta: precisa redesenhar a página; caneta só desenha o traço novo
-    if (L.tool === 'highlighter' || this.player || this.sel) this.render();
-    else this.drawItemNow(it, L.page);
+    // desenha só o traço novo; o marca-texto é reposicionado por baixo da tinta na próxima pausa
+    this.lastInkUp = performance.now();
+    this.drawItemNow(it, L.page);
+    if (L.tool === 'highlighter') this.requestRender();
     this.lctx.setTransform(1, 0, 0, 1, 0, 0);
     this.lctx.clearRect(0, 0, this.liveCanvas.width, this.liveCanvas.height);
     this.maybeAppendPage(L.page, it.bbox[3]);
@@ -1541,9 +1565,10 @@ export class Editor {
 
   refreshThumbs = debounce(ids => {
     if (!this.pagesGrid) return;
+    if (this.writing() || this.penDown) { this.refreshThumbs(ids); return; } // espera você parar de escrever
     for (const cv of this.pagesGrid.querySelectorAll('canvas')) if (ids.has(cv._page.id)) this.drawThumb(cv);
     this._thumbIds = new Set();
-  }, 700);
+  }, 1500);
 
   goToPage(p) {
     this.cam.y = p._oy - 16 / this.cam.z;
