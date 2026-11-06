@@ -3,10 +3,12 @@
 import * as db from './db.js';
 import * as store from './store.js';
 import * as audio from './audio.js';
+import * as sync from './sync.js';
 import { initSync } from './sync.js';
 import { Library } from './library.js';
 import { Editor } from './editor.js';
-import { toast, applyTheme } from './ui.js';
+import { toast, applyTheme, modal } from './ui.js';
+import { el, isIPad } from './util.js';
 
 applyTheme();
 
@@ -59,20 +61,41 @@ function queueRoute() { routing = routing.then(route, route); }
 // Chegou pelo link do e-mail de confirmação: avisa e limpa o endereço
 function handleAuthReturn() {
   const h = location.hash;
-  if (!/access_token=|error_description=|type=signup/.test(h)) return;
+  if (!/access_token=|error_description=|type=signup|type=recovery/.test(h)) return null;
   const params = new URLSearchParams(h.slice(1));
   const err = params.get('error_description');
   history.replaceState(null, '', location.pathname + '#/');
+  // link de "esqueci a senha": abre a troca de senha
+  if (params.get('type') === 'recovery' && params.get('access_token')) {
+    return { access_token: params.get('access_token'), refresh_token: params.get('refresh_token') };
+  }
   const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
   const msg = err
     ? (/expired|invalid/i.test(err) ? 'Esse link já foi usado ou expirou. Se você já confirmou antes, é só entrar com seu e-mail e senha.' : 'Erro na confirmação: ' + err)
     : 'E-mail confirmado!';
-  const next = standalone ? 'Agora vá em Ajustes e toque em Entrar.' : 'Agora feche o Safari, abra o Anota pelo ícone da Tela de Início, vá em Ajustes e toque em Entrar.';
+  const next = standalone || !isIPad() ? 'Agora vá em Ajustes e toque em Entrar.' : 'Agora abra o Anota pelo ícone da Tela de Início, vá em Ajustes e toque em Entrar.';
   setTimeout(() => toast(msg + ' ' + next, { timeout: 15000, kind: err && !/expired|invalid/i.test(err) ? 'error' : '' }), 600);
+  return null;
+}
+
+// Tela para escolher a senha nova depois do link de "esqueci a senha"
+async function finishRecovery(tokens) {
+  try { await sync.useRecoveryLink(tokens); } catch (e) { toast('Esse link de troca de senha expirou. Peça outro em Ajustes › Esqueci a senha.', { kind: 'error', timeout: 10000 }); return; }
+  const p1 = el('input', { type: 'password', class: 'field', placeholder: 'Senha nova (mínimo 6 caracteres)', autocomplete: 'new-password' });
+  const p2 = el('input', { type: 'password', class: 'field', placeholder: 'Repita a senha nova', autocomplete: 'new-password' });
+  const msg = el('p', { class: 'small' });
+  let m;
+  m = modal(el('div', {}, el('h3', {}, 'Escolha sua senha nova'), p1, p2, msg,
+    el('div', { class: 'modal-actions' }, el('button', { class: 'btn primary', onclick: async () => {
+      if (p1.value.length < 6) { msg.textContent = 'A senha precisa ter pelo menos 6 caracteres.'; return; }
+      if (p1.value !== p2.value) { msg.textContent = 'As duas senhas não são iguais.'; return; }
+      try { await sync.updatePassword(p1.value); m.close(); toast('Senha trocada! Use a senha nova em todos os aparelhos.', { timeout: 8000 }); }
+      catch (e) { msg.textContent = 'Não deu: ' + e.message; }
+    } }, 'Salvar senha nova'))));
 }
 
 async function main() {
-  handleAuthReturn();
+  const recovery = handleAuthReturn();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     try {
       const hadController = !!navigator.serviceWorker.controller;
@@ -100,7 +123,7 @@ async function main() {
   try {
     if (await audio.recoverRecordings()) toast('Uma gravação interrompida foi recuperada e salva.', { timeout: 6000 });
   } catch (e) { console.warn(e); }
-  initSync().catch(e => console.warn('sync init', e));
+  initSync().then(() => { if (recovery) finishRecovery(recovery); }).catch(e => console.warn('sync init', e));
   window.addEventListener('hashchange', queueRoute);
   queueRoute();
 }
