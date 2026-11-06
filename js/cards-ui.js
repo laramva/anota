@@ -205,7 +205,7 @@ export class CardsSection {
       { sep: true },
       { label: 'Excluir baralho', icon: 'trash', danger: true, onClick: async () => {
         const n = this.counts[d.id]?.total || 0;
-        if (!await confirmBox(`Excluir "${d.name}"?`, `As ${n} cartas e o histórico de revisões serão apagados deste iPad e da nuvem.`, { ok: 'Excluir', danger: true })) return;
+        if (!await confirmBox(`Excluir "${d.name}"?`, `As ${n} cartas e o histórico de revisões serão apagados deste aparelho e da nuvem.`, { ok: 'Excluir', danger: true })) return;
         await C.deleteDeck(d); this.go({ type: 'home' }); this.refresh();
       } },
     ], { align: 'right' });
