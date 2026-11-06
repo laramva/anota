@@ -4,7 +4,7 @@
 import * as db from './db.js';
 import * as store from './store.js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
-import { emitter, now } from './util.js';
+import { emitter, now, uid, isIPad, loadPref, savePref, APP_VERSION } from './util.js';
 
 export const syncBus = emitter();
 const ORDER = ['subjects', 'notes', 'pages', 'blobs', 'recordings', 'items', 'decks', 'fnotes', 'fcards', 'revlog'];
@@ -117,6 +117,7 @@ export async function syncNow(force = false) {
     state.lastSync = now();
     await db.setMeta('lastSync', state.lastSync);
     setStatus('ok');
+    heartbeat().catch(e => console.warn('aparelho', e));
     downloadMissing();
   } catch (e) {
     console.warn('sync', e);
@@ -237,6 +238,80 @@ async function merge(rows, changed) {
     if (['deck', 'fnote', 'fcard', 'revlog'].includes(row.kind)) changed.add('__cards');
   }
   for (const [s, recs] of byStore) await db.putMany(s, recs);
+}
+
+// ---------- Aparelhos conectados e verificação ----------
+export function deviceInfo() {
+  let id = loadPref('deviceId', null);
+  if (!id) { id = uid(); savePref('deviceId', id); }
+  const ua = navigator.userAgent;
+  const kind = isIPad() ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'PC (Windows)' : /Mac/.test(ua) ? 'Mac' : 'Computador';
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  return { id, kind, name: loadPref('deviceName', null) || kind, app: standalone ? 'app da Tela de Início' : 'navegador' };
+}
+export function setDeviceName(n) { savePref('deviceName', (n || '').trim() || null); lastBeat = 0; }
+
+// Cada aparelho avisa a nuvem quando sincronizou (para você ver PC e iPad na verificação)
+let lastBeat = 0;
+async function heartbeat(force = false) {
+  if (!client || !user || (!force && now() - lastBeat < 120000)) return;
+  lastBeat = now();
+  const d = deviceInfo();
+  const { error } = await client.rpc('push_records', {
+    rows: [{ id: d.id, kind: 'device', note_id: null, data: { name: d.name, kind: d.kind, app: d.app, version: APP_VERSION, lastSync: now() }, updated_at: now(), deleted: false }],
+  });
+  if (error) throw error;
+}
+
+const LABELS = { subjects: 'Matérias e temas', notes: 'Notas', pages: 'Páginas', items: 'Traços, textos e imagens', recordings: 'Gravações', blobs: 'Arquivos (PDF, áudio, imagens)', decks: 'Baralhos', fnotes: 'Conteúdo das cartas', fcards: 'Cartas', revlog: 'Histórico de revisões' };
+
+// Compara, tipo por tipo, o que está neste aparelho com o que está na nuvem
+export async function verify() {
+  if (!client || !user) throw new Error('Entre na sua conta primeiro (Ajustes › Entrar).');
+  if (!navigator.onLine) throw new Error('Sem internet agora. Conecte-se e tente de novo.');
+  await syncNow(true);
+  if (state.status === 'error') throw new Error(state.error || 'erro ao sincronizar');
+  await heartbeat(true);
+  const files = new Set(await db.allKeys('files'));
+  const rows = [];
+  for (const s of ORDER) {
+    const kind = store.STORE_KIND[s];
+    const local = (await db.getAll(s)).filter(r => !r.deleted);
+    const { count, error } = await client.from('records').select('id', { count: 'exact', head: true }).eq('kind', kind).eq('deleted', false);
+    if (error) throw error;
+    rows.push({ store: s, label: LABELS[s], local: local.length, cloud: count ?? 0 });
+    if (s === 'blobs') {
+      rows.toUpload = local.filter(b => b._needsUpload).length;
+      rows.toDownload = local.filter(b => !files.has(b.id)).length;
+    }
+  }
+  const { data: devs, error: derr } = await client.from('records').select('id,data,updated_at').eq('kind', 'device').eq('deleted', false).order('updated_at', { ascending: false });
+  if (derr) throw derr;
+  const pending = await updatePending();
+  const same = rows.every(r => r.local === r.cloud);
+  return {
+    rows, pending, toUpload: rows.toUpload || 0, toDownload: rows.toDownload || 0, same,
+    ok: same && !pending && !(rows.toUpload || 0) && !(rows.toDownload || 0),
+    devices: (devs || []).map(d => ({ id: d.id, ...d.data, at: Number(d.updated_at) })),
+    me: deviceInfo().id, email: user.email, lastSync: state.lastSync,
+  };
+}
+
+// Reparos: reenviar tudo deste aparelho / baixar tudo da nuvem de novo (nada é apagado)
+export async function resendAll() {
+  const files = new Set(await db.allKeys('files'));
+  for (const s of ORDER) {
+    const all = await db.getAll(s);
+    for (const r of all) { r._dirty = 1; if (s === 'blobs') r._needsUpload = files.has(r.id) ? 1 : 0; }
+    await db.putMany(s, all);
+  }
+  await updatePending();
+  await syncNow(true);
+}
+export async function redownloadAll() {
+  await db.delMeta('pullCursor');
+  await syncNow(true);
+  await downloadMissing();
 }
 
 // ---------- Arquivos ----------
