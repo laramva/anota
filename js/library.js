@@ -3,7 +3,7 @@
 import * as db from './db.js';
 import * as store from './store.js';
 import * as sync from './sync.js';
-import { el, fmtDate, fmtBytes, loadPref, savePref, isIPad, now, defaultPaper } from './util.js';
+import { el, fmtDate, fmtBytes, loadPref, savePref, isIPad, now, defaultPaper, APP_VERSION } from './util.js';
 import { icon, iconBtn, toast, menu, modal, promptText, confirmBox, pickFile, busy, applyTheme } from './ui.js';
 import { importPdfAsNote, exportNotePdf, shareOrDownload, exportBackup, importBackup } from './export.js';
 import { TEMPLATES, PAPER_COLORS } from './render.js';
@@ -30,7 +30,7 @@ function longPress(node, fn) {
 }
 
 const SUBJECT_COLORS =['#2f6fed', '#e5484d', '#30a46c', '#f5a524', '#8e4ec6', '#12a594', '#e93d82', '#6e6e73', '#d9730d', '#5b5bd6'];
-export const APP_VERSION = '1.3.0';
+
 const NONE = '__none';
 
 export class Library {
@@ -149,7 +149,7 @@ export class Library {
       el('button', { class: this.section === 'cards' ? 'active' : '', onclick: () => this.setSection('cards') }, icon('cards', 18), 'Flashcards', due ? el('span', { class: 'badge' }, due > 99 ? '99+' : due) : null)));
     if (this.section === 'cards') {
       this.cards.renderSidebar(s, row);
-      this.syncChip = el('button', { class: 'sync-chip', onclick: () => this.openSettings() });
+      this.syncChip = el('button', { class: 'sync-chip', onclick: () => (sync.getUser() ? this.openSyncCheck() : this.openSettings()) });
       s.append(el('div', { class: 'side-foot' }, this.syncChip, iconBtn('help', 'Como usar', () => showHelp(this)), iconBtn('gear', 'Ajustes', () => this.openSettings())));
       this.renderSyncChip();
       return;
@@ -189,7 +189,7 @@ export class Library {
     s.append(list);
     const trashed = this.notes.filter(n => n.trashed).length;
     s.append(row({ label: 'Lixeira', ic: 'trash', active: v.type === 'trash', count: trashed || null, onClick: () => this.setView({ type: 'trash' }) }));
-    this.syncChip = el('button', { class: 'sync-chip', onclick: () => this.openSettings() });
+    this.syncChip = el('button', { class: 'sync-chip', onclick: () => (sync.getUser() ? this.openSyncCheck() : this.openSettings()) });
     s.append(el('div', { class: 'side-foot' }, this.syncChip, iconBtn('help', 'Como usar', () => showHelp(this)), iconBtn('gear', 'Ajustes', () => this.openSettings())));
     this.renderSyncChip();
   }
@@ -197,11 +197,11 @@ export class Library {
   renderSyncChip() {
     if (!this.syncChip) return;
     const st = sync.getState();
-    let ic = 'cloudOff', txt = 'Só neste iPad', cls = '';
+    let ic = 'cloudOff', txt = 'Só neste aparelho', cls = '';
     if (st.status === 'off') { ic = 'cloudOff'; txt = 'Nuvem não configurada'; }
     else if (st.status === 'signed-out') { ic = 'cloudOff'; txt = 'Entrar para sincronizar'; cls = 'warn'; }
     else if (st.status === 'syncing') { ic = 'sync'; txt = 'Sincronizando…'; cls = 'spin'; }
-    else if (st.status === 'offline') { ic = 'cloudOff'; txt = st.pending ? `Offline · ${st.pending} pendentes` : 'Offline · salvo no iPad'; }
+    else if (st.status === 'offline') { ic = 'cloudOff'; txt = st.pending ? `Offline · ${st.pending} pendentes` : 'Offline · salvo neste aparelho'; }
     else if (st.status === 'error') { ic = 'cloudOff'; txt = 'Erro na sincronização'; cls = 'warn'; }
     else if (st.pending) { ic = 'cloud'; txt = `${st.pending} pendentes`; }
     else { ic = 'cloudOk'; txt = 'Tudo salvo na nuvem'; cls = 'ok'; }
@@ -553,7 +553,7 @@ export class Library {
     }
     const st = sync.getState();
     if (st.status === 'signed-out') {
-      return el('div', { class: 'banner' }, icon('cloud', 20), el('div', {}, el('b', {}, 'Entre na sua conta para ter cópia na nuvem. '), 'Suas notas já estão salvas neste iPad.'),
+      return el('div', { class: 'banner' }, icon('cloud', 20), el('div', {}, el('b', {}, 'Entre na sua conta para ter cópia na nuvem. '), 'Suas notas já estão salvas neste aparelho.'),
         el('button', { class: 'btn small primary', onclick: () => this.openSettings() }, 'Entrar'));
     }
     const lastBackup = await db.getMeta('lastBackupAt', null);
@@ -641,7 +641,7 @@ export class Library {
     menu(anchor, [
       { label: 'Restaurar', icon: 'restore', onClick: async () => { n.trashed = false; await store.save('note', n); this.refresh(); toast('Nota restaurada.'); } },
       { label: 'Excluir definitivamente', icon: 'trash', danger: true, onClick: async () => {
-        if (!await confirmBox('Excluir definitivamente?', `"${n.title}" será apagada deste iPad e da nuvem. Não dá para desfazer.`, { ok: 'Excluir', danger: true })) return;
+        if (!await confirmBox('Excluir definitivamente?', `"${n.title}" será apagada deste aparelho e da nuvem. Não dá para desfazer.`, { ok: 'Excluir', danger: true })) return;
         await store.purgeNote(n); this.refresh();
       } },
     ], { align: 'right' });
@@ -649,7 +649,7 @@ export class Library {
 
   async emptyTrash() {
     const list = this.notes.filter(n => n.trashed);
-    if (!await confirmBox(`Esvaziar a lixeira (${list.length})?`, 'Essas notas serão apagadas deste iPad e da nuvem. Não dá para desfazer.', { ok: 'Esvaziar', danger: true })) return;
+    if (!await confirmBox(`Esvaziar a lixeira (${list.length})?`, 'Essas notas serão apagadas deste aparelho e da nuvem. Não dá para desfazer.', { ok: 'Esvaziar', danger: true })) return;
     for (const n of list) await store.purgeNote(n);
     this.refresh();
   }
@@ -705,7 +705,7 @@ export class Library {
       const info = await store.storageInfo();
       const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
       box.append(el('section', {},
-        el('h4', {}, 'Armazenamento neste iPad'),
+        el('h4', {}, 'Armazenamento neste aparelho'),
         el('p', { class: 'small' }, info.usage != null ? `Usando ${fmtBytes(info.usage)}${info.quota ? ' de ' + fmtBytes(info.quota) + ' disponíveis' : ''}.` : 'Uso não disponível.'),
         el('p', { class: 'small' }, 'Armazenamento protegido: ', el('b', {}, info.persisted ? 'sim' : 'não'),
           info.persisted ? '' : ' (abra pelo ícone da Tela de Início; a nuvem e o backup protegem seus dados de qualquer forma)'),
@@ -769,7 +769,7 @@ export class Library {
         el('li', {}, el('b', {}, 'Letra à mão solta na página'), ' → precisa da chave gratuita do Google abaixo (opcional).')),
       el('label', { class: 'field-row' }, el('span', {}, 'Criar flashcards automaticamente'), on));
     const keyIn = el('input', { type: 'text', class: 'field', placeholder: 'Cole aqui a chave do Google AI Studio (começa com AIza…)', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false', value: auto.getKey() });
-    const msg = el('p', { class: 'small' }, hasKey ? '✓ Chave salva neste iPad. A letra à mão também está sendo lida.' : '');
+    const msg = el('p', { class: 'small' }, hasKey ? '✓ Chave salva neste aparelho. A letra à mão também está sendo lida.' : '');
     sec.append(
       el('details', { class: 'auto-key', open: !hasKey ? true : null },
         el('summary', {}, hasKey ? 'Leitura da letra à mão: ligada' : 'Ligar a leitura da letra à mão (grátis, 1 minuto)'),
@@ -786,17 +786,75 @@ export class Library {
             try { const model = await auto.testKey(k); auto.setKey(k); msg.textContent = `✓ Funcionou! (${model}). A letra à mão agora também vira flashcard.`; }
             catch (e) { msg.className = 'small error'; msg.textContent = 'Não funcionou: ' + e.message; }
           } }, 'Salvar e testar'),
-          hasKey ? el('button', { class: 'btn', onclick: () => { auto.setKey(''); keyIn.value = ''; msg.textContent = 'Chave removida deste iPad.'; } }, 'Remover chave') : null),
-        el('p', { class: 'muted small' }, 'A chave fica só neste iPad (não vai para a nuvem nem para o GitHub). As imagens das páginas são enviadas ao Google para leitura; no plano gratuito o Google pode usar esse conteúdo para melhorar os serviços dele. Sem chave, nada sai do iPad.')),
+          hasKey ? el('button', { class: 'btn', onclick: () => { auto.setKey(''); keyIn.value = ''; msg.textContent = 'Chave removida deste aparelho.'; } }, 'Remover chave') : null),
+        el('p', { class: 'muted small' }, 'A chave fica só neste aparelho (não vai para a nuvem nem para o GitHub). As imagens das páginas são enviadas ao Google para leitura; no plano gratuito o Google pode usar esse conteúdo para melhorar os serviços dele. Sem chave, nada sai do aparelho.')),
       el('p', { class: 'small' }, 'Última leitura: ' + (last ? `${fmtDate(last.at)} · ${last.pages} página(s) · ${last.cards} carta(s) nova(s)` + (last.error ? ` · aviso: ${last.error}` : '') : 'ainda não')),
       el('div', { class: 'row-btns' }, el('button', { class: 'btn', onclick: () => { m.close(); this.runAuto(true); } }, icon('sparkle', 18), 'Gerar agora')));
     return sec;
   }
 
+  // Tela que mostra, com certeza, se este aparelho e a nuvem estão iguais e quais aparelhos estão conectados
+  openSyncCheck() {
+    const box = el('div', { class: 'settings sync-check' });
+    const m = modal(box, { wide: true });
+    const head = () => el('div', { class: 'settings-head' }, el('h2', {}, 'Verificar sincronização'), iconBtn('x', 'Fechar', () => m.close()));
+    const rel = ts => {
+      const s = (Date.now() - ts) / 1000;
+      if (s < 90) return 'agora mesmo';
+      if (s < 3600) return `há ${Math.round(s / 60)} min`;
+      if (s < 86400) return `há ${Math.round(s / 3600)} h`;
+      return 'em ' + fmtDate(ts);
+    };
+    const busyView = txt => box.replaceChildren(head(), el('div', { class: 'busy' }, el('div', { class: 'spinner' }), el('p', {}, txt)));
+    const action = async (txt, fn) => { busyView(txt); try { await fn(); } catch (e) { toast('Erro: ' + e.message, { kind: 'error' }); } load(); };
+    const render = r => {
+      const others = r.devices.filter(d => d.id !== r.me);
+      let verdict;
+      if (r.ok) verdict = el('div', { class: 'verdict ok' }, icon('cloudOk', 30), el('div', {}, el('b', {}, 'Tudo sincronizado ✓'),
+        el('p', {}, 'Este aparelho e a nuvem têm exatamente o mesmo conteúdo, item por item. Todo aparelho conectado na mesma conta recebe tudo isso.')));
+      else if (r.same && !r.pending && !r.toUpload && r.toDownload) verdict = el('div', { class: 'verdict warn' }, icon('download', 30), el('div', {}, el('b', {}, 'Quase lá: baixando arquivos'),
+        el('p', {}, `${r.toDownload} arquivo(s) (PDF, áudio ou imagem) ainda estão chegando neste aparelho. Deixe o app aberto com internet por alguns minutos e verifique de novo.`)));
+      else verdict = el('div', { class: 'verdict warn' }, icon('sync', 30), el('div', {}, el('b', {}, 'Ainda não está tudo igual'),
+        el('p', {}, 'Toque em "Sincronizar agora". Se continuar diferente, use "Reenviar tudo deste aparelho". Nada é apagado.')));
+      const nameIn = el('input', { type: 'text', class: 'field', value: sync.deviceInfo().name, placeholder: 'Nome deste aparelho' });
+      const table = el('div', { class: 'sync-table' },
+        el('div', { class: 'st-row st-head' }, el('span', {}, 'O quê'), el('span', {}, 'Neste aparelho'), el('span', {}, 'Na nuvem'), el('span', {}, '')),
+        ...r.rows.map(x => el('div', { class: 'st-row' + (x.local === x.cloud ? '' : ' diff') }, el('span', {}, x.label), el('b', {}, String(x.local)), el('b', {}, String(x.cloud)), el('span', {}, x.local === x.cloud ? '✓' : '⚠'))));
+      box.replaceChildren(head(), verdict,
+        el('section', {},
+          el('h4', {}, 'Aparelhos conectados nesta conta'),
+          el('p', { class: 'muted small' }, 'Conta: ', el('b', {}, r.email)),
+          el('div', { class: 'dev-list' }, ...r.devices.map(d => el('div', { class: 'dev-row' + (d.id === r.me ? ' me' : '') },
+            el('span', { class: 'qa-ico ' + (/iPad|iPhone/.test(d.kind) ? 'c-purple' : 'c-blue') }, icon(/iPad|iPhone/.test(d.kind) ? 'pages' : 'notes', 20)),
+            el('div', {}, el('b', {}, d.name + (d.id === r.me ? ' (este aparelho)' : '')),
+              el('div', { class: 'muted small' }, `${d.app || ''} · versão ${d.version || '?'} · sincronizou ${rel(d.lastSync || d.at)}`))))),
+          !others.length ? el('p', { class: 'small warn-text' }, 'Só este aparelho apareceu até agora. Abra o Anota no outro aparelho, entre com a mesma conta (Ajustes › Entrar) e verifique de novo.') : null,
+          el('div', { class: 'field-row' }, el('span', { class: 'small' }, 'Nome deste aparelho'), nameIn,
+            el('button', { class: 'btn small', onclick: () => action('Salvando…', async () => { sync.setDeviceName(nameIn.value); await sync.syncNow(true); }) }, 'Salvar'))),
+        el('section', {}, el('h4', {}, 'Conteúdo: este aparelho × nuvem'), table,
+          el('p', { class: 'small muted' }, `Alterações esperando envio: ${r.pending} · arquivos para enviar: ${r.toUpload} · arquivos para baixar: ${r.toDownload}`)),
+        el('div', { class: 'row-btns' },
+          el('button', { class: 'btn primary', onclick: () => load() }, icon('sync', 18), 'Sincronizar agora e verificar'),
+          el('button', { class: 'btn', onclick: () => action('Reenviando tudo deste aparelho…', () => sync.resendAll()) }, icon('upload', 18), 'Reenviar tudo deste aparelho'),
+          el('button', { class: 'btn', onclick: () => action('Baixando tudo da nuvem…', () => sync.redownloadAll()) }, icon('download', 18), 'Baixar tudo da nuvem de novo')),
+        el('p', { class: 'muted small' }, 'Para ter certeza nos dois: faça esta verificação no PC e no iPad. Os dois precisam aparecer em "Aparelhos conectados" e mostrar "Tudo sincronizado ✓".'));
+      this.refresh();
+    };
+    const load = async () => {
+      busyView('Sincronizando e comparando com a nuvem…');
+      try { render(await sync.verify()); }
+      catch (e) {
+        box.replaceChildren(head(), el('div', { class: 'verdict bad' }, icon('cloudOff', 30), el('div', {}, el('b', {}, 'Não deu para verificar agora'), el('p', {}, e.message))),
+          el('div', { class: 'row-btns' }, el('button', { class: 'btn primary', onclick: load }, 'Tentar de novo')));
+      }
+    };
+    load();
+  }
+
   async accountSection(redraw) {
     const sec = el('section', {}, el('h4', {}, 'Nuvem (sincronização)'));
     if (!sync.configured()) {
-      sec.append(el('p', { class: 'muted small' }, 'A nuvem ainda não foi configurada neste app. Suas notas estão salvas só neste iPad. Faça backups.'));
+      sec.append(el('p', { class: 'muted small' }, 'A nuvem ainda não foi configurada neste app. Suas notas estão salvas só neste aparelho. Faça backups.'));
       return sec;
     }
     const st = sync.getState();
@@ -827,15 +885,16 @@ export class Library {
           el('button', { class: 'btn', onclick: () => go(true) }, 'Criar conta')));
       return sec;
     }
-    const labels = { ok: 'Tudo sincronizado', syncing: 'Sincronizando…', offline: 'Sem internet (salvo no iPad)', error: 'Erro: ' + (st.error || ''), idle: 'Aguardando' };
+    const labels = { ok: 'Tudo sincronizado', syncing: 'Sincronizando…', offline: 'Sem internet (salvo neste aparelho)', error: 'Erro: ' + (st.error || ''), idle: 'Aguardando' };
     sec.append(
       el('p', { class: 'small' }, 'Conta: ', el('b', {}, st.user.email)),
       el('p', { class: 'small' }, 'Status: ', labels[st.status] || st.status, st.pending ? ` · ${st.pending} alterações para enviar` : ''),
       el('p', { class: 'small' }, 'Última sincronização: ' + (st.lastSync ? fmtDate(st.lastSync) : 'ainda não')),
       el('div', { class: 'row-btns' },
-        el('button', { class: 'btn primary', onclick: async () => { await sync.syncNow(true); redraw(); } }, icon('sync', 18), 'Sincronizar agora'),
+        el('button', { class: 'btn primary', onclick: () => this.openSyncCheck() }, icon('check', 18), 'Verificar sincronização'),
+        el('button', { class: 'btn', onclick: async () => { await sync.syncNow(true); redraw(); } }, icon('sync', 18), 'Sincronizar agora'),
         el('button', { class: 'btn', onclick: async () => {
-          if (!await confirmBox('Sair da conta?', 'Suas notas continuam neste iPad, mas param de ir para a nuvem.', { ok: 'Sair' })) return;
+          if (!await confirmBox('Sair da conta?', 'Suas notas continuam neste aparelho, mas param de ir para a nuvem.', { ok: 'Sair' })) return;
           await sync.signOut(); redraw();
         } }, 'Sair')));
     return sec;
