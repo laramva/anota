@@ -650,3 +650,6 @@ select.field { width: auto; min-width: 160px; }
 .st-row.diff { background: var(--warn-bg); }
 .sync-check .field-row .field { max-width: 220px; }
 @media (max-width: 560px) { .st-row { grid-template-columns: 1fr 70px 60px 22px; font-size: 13px; } }
+.login-form { display: flex; flex-direction: column; gap: 4px; }
+.login-tabs { margin-bottom: 6px; }
+.login-form .row-btns { margin-top: 6px; }
