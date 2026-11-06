@@ -93,3 +93,6 @@ export function defaultPaper() {
 export function savePref(key, v) {
   try { localStorage.setItem('anota:' + key, JSON.stringify(v)); } catch { }
 }
+
+// Versão do app (aparece nos Ajustes e na verificação de sincronização)
+export const APP_VERSION = '1.3.1';
