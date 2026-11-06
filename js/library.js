@@ -66,7 +66,13 @@ export class Library {
       sync.syncBus.on('status', () => this.renderSyncChip()),
     );
     await this.refresh();
-    if (!loadPref('welcomed', false)) { savePref('welcomed', true); showWelcome(this); }
+    const welcome = () => { if (!loadPref('welcomed', false)) { savePref('welcomed', true); showWelcome(this); } };
+    sync.whenReady().then(() => {
+      if (!this.root.isConnected) return;
+      // aparelho novo e sem login: oferece entrar (para trazer as notas dos outros aparelhos)
+      if (sync.configured() && !sync.getUser() && !loadPref('loginAsked', false)) { savePref('loginAsked', true); this.askLogin(welcome); }
+      else welcome();
+    });
     // flashcards automáticos das anotações (roda sozinho, fora da nota aberta)
     this.autoT = setTimeout(() => this.runAuto(false), 4000);
     const vis = () => { if (document.visibilityState === 'visible') { clearTimeout(this.autoT); this.autoT = setTimeout(() => this.runAuto(false), 4000); } };
@@ -851,6 +857,75 @@ export class Library {
     load();
   }
 
+  // Formulário de conta: Entrar / Criar conta / Esqueci a senha (funciona igual em qualquer aparelho)
+  loginForm(onDone) {
+    let mode = 'login';
+    const wrap = el('div', { class: 'login-form' });
+    const draw = () => {
+      const email = el('input', { type: 'email', class: 'field', placeholder: 'Seu e-mail', autocomplete: 'username', autocapitalize: 'off', inputmode: 'email' });
+      const pass = el('input', { type: 'password', class: 'field', placeholder: mode === 'signup' ? 'Crie uma senha (mínimo 6 caracteres)' : 'Sua senha', autocomplete: mode === 'signup' ? 'new-password' : 'current-password' });
+      const pass2 = el('input', { type: 'password', class: 'field', placeholder: 'Repita a senha', autocomplete: 'new-password' });
+      const msg = el('p', { class: 'small' });
+      const err = e => {
+        msg.className = 'small error';
+        msg.textContent = /invalid login/i.test(e.message) ? 'E-mail ou senha incorretos. Se esqueceu a senha, toque em "Esqueci a senha".'
+          : /already registered|already exists/i.test(e.message) ? 'Esse e-mail já tem conta. Toque em "Entrar".'
+          : /signups? not allowed|signup.*disabled/i.test(e.message) ? 'A criação de contas está desligada no momento. Use "Entrar" com uma conta que já existe.'
+          : /confirm/i.test(e.message) ? 'Confirme seu e-mail antes de entrar: abra o link que enviamos (veja também o spam).'
+          : /rate limit|too many/i.test(e.message) ? 'Muitas tentativas seguidas. Espere alguns minutos e tente de novo.'
+          : /password/i.test(e.message) && /6/.test(e.message) ? 'A senha precisa ter pelo menos 6 caracteres.' : e.message;
+      };
+      const submit = async () => {
+        const em = email.value.trim();
+        if (!/^\S+@\S+\.\S+$/.test(em)) { msg.className = 'small error'; msg.textContent = 'Digite um e-mail válido.'; return; }
+        msg.className = 'small'; msg.textContent = 'Aguarde…';
+        try {
+          if (mode === 'forgot') {
+            await sync.resetPassword(em);
+            msg.textContent = 'Pronto! Enviamos um link para ' + em + '. Abra o e-mail (veja o spam), toque no link e escolha a senha nova.';
+            return;
+          }
+          if (mode === 'signup') {
+            if (pass.value.length < 6) { msg.className = 'small error'; msg.textContent = 'A senha precisa ter pelo menos 6 caracteres.'; return; }
+            if (pass.value !== pass2.value) { msg.className = 'small error'; msg.textContent = 'As duas senhas não são iguais.'; return; }
+            const r = await sync.signUp(em, pass.value);
+            if (r.needsConfirm) { msg.textContent = 'Conta criada! Abra o e-mail que enviamos para ' + em + ' (veja o spam), toque no link de confirmação e depois volte aqui e toque em "Entrar".'; mode = 'login'; return; }
+          } else await sync.signIn(em, pass.value);
+          toast('Conectado! Suas notas estão sincronizando…');
+          onDone?.();
+        } catch (e) { err(e); }
+      };
+      [email, pass, pass2].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); }));
+      const tabs = el('div', { class: 'seg login-tabs' },
+        el('button', { class: mode === 'login' ? 'active' : '', onclick: () => { mode = 'login'; draw(); } }, 'Entrar'),
+        el('button', { class: mode === 'signup' ? 'active' : '', onclick: () => { mode = 'signup'; draw(); } }, 'Criar conta'));
+      const title = { login: 'Já tem conta? Entre com seu e-mail e senha.', signup: 'Primeira vez? Crie sua conta grátis. Com ela, suas notas aparecem em qualquer aparelho.', forgot: 'Digite seu e-mail e enviamos um link para criar uma senha nova.' }[mode];
+      wrap.replaceChildren(...[
+        mode !== 'forgot' ? tabs : el('b', {}, 'Esqueci a senha'),
+        el('p', { class: 'muted small' }, title),
+        email,
+        mode !== 'forgot' ? pass : null,
+        mode === 'signup' ? pass2 : null,
+        msg,
+        el('div', { class: 'row-btns' },
+          el('button', { class: 'btn primary', onclick: submit }, mode === 'login' ? 'Entrar' : mode === 'signup' ? 'Criar conta' : 'Enviar link'),
+          mode === 'login' ? el('button', { class: 'btn ghost', onclick: () => { mode = 'forgot'; draw(); } }, 'Esqueci a senha') : null,
+          mode === 'forgot' ? el('button', { class: 'btn ghost', onclick: () => { mode = 'login'; draw(); } }, 'Voltar') : null)].filter(Boolean));
+    };
+    draw();
+    return wrap;
+  }
+
+  // Primeira vez num aparelho: oferece entrar logo, para trazer as notas dos outros aparelhos
+  askLogin(onClose) {
+    let m;
+    m = modal(el('div', { class: 'welcome' },
+      el('div', { class: 'welcome-top' }, el('img', { src: 'icons/icon-192.png', alt: '' }),
+        el('div', {}, el('h2', {}, 'Suas notas em qualquer aparelho'), el('p', { class: 'muted' }, 'Entre na sua conta e tudo que você já fez em outro aparelho aparece aqui.'))),
+      this.loginForm(() => { m.close(); this.refresh(); }),
+      el('div', { class: 'modal-actions' }, el('button', { class: 'btn ghost', onclick: () => m.close() }, 'Agora não (usar só neste aparelho)'))), { wide: true, onClose });
+  }
+
   async accountSection(redraw) {
     const sec = el('section', {}, el('h4', {}, 'Nuvem (sincronização)'));
     if (!sync.configured()) {
@@ -859,30 +934,7 @@ export class Library {
     }
     const st = sync.getState();
     if (!st.user) {
-      const email = el('input', { type: 'email', class: 'field', placeholder: 'E-mail', autocomplete: 'username', autocapitalize: 'off' });
-      const pass = el('input', { type: 'password', class: 'field', placeholder: 'Senha (mínimo 6 caracteres)', autocomplete: 'current-password' });
-      const msg = el('p', { class: 'small' });
-      const go = async up => {
-        msg.textContent = 'Aguarde…'; msg.className = 'small';
-        try {
-          if (up) {
-            const r = await sync.signUp(email.value.trim(), pass.value);
-            if (r.needsConfirm) { msg.textContent = 'Conta criada! Confirme pelo link que enviamos no seu e-mail e depois toque em Entrar.'; return; }
-          } else await sync.signIn(email.value.trim(), pass.value);
-          toast('Conectado! Sincronizando…');
-          redraw();
-        } catch (e) {
-          msg.className = 'small error';
-          msg.textContent = /invalid login/i.test(e.message) ? 'E-mail ou senha incorretos.'
-            : /signups? not allowed|signup.*disabled/i.test(e.message) ? 'Novos cadastros estão desligados neste app. Use "Entrar" com a conta que você já tem.'
-            : /confirm/i.test(e.message) ? 'Confirme seu e-mail antes de entrar (veja sua caixa de entrada).' : e.message;
-        }
-      };
-      sec.append(el('p', { class: 'muted small' }, 'Entre para guardar uma cópia de tudo na nuvem e recuperar em qualquer aparelho.'),
-        email, pass, msg,
-        el('div', { class: 'row-btns' },
-          el('button', { class: 'btn primary', onclick: () => go(false) }, 'Entrar'),
-          el('button', { class: 'btn', onclick: () => go(true) }, 'Criar conta')));
+      sec.append(this.loginForm(redraw));
       return sec;
     }
     const labels = { ok: 'Tudo sincronizado', syncing: 'Sincronizando…', offline: 'Sem internet (salvo neste aparelho)', error: 'Erro: ' + (st.error || ''), idle: 'Aguardando' };
