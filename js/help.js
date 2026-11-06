@@ -20,7 +20,7 @@ const FEATURES = [
     how: ['Crie matérias no "+" da barra lateral; dentro delas, temas.', 'Menu ••• da nota › "Mover para matéria / tema".'] },
   { ic: 'pages', c: 'c-blue', t: 'Páginas', d: 'Veja todas as páginas em miniatura, pule para qualquer uma e reordene arrastando.',
     how: ['Na nota, toque em "Páginas".', 'Arraste pelos pontinhos para mudar a ordem; ••• para duplicar ou excluir.'] },
-  { ic: 'cloudOk', c: 'c-green', t: 'Tudo salvo, sempre', d: 'Salva no iPad a cada traço, funciona sem internet e sincroniza com a nuvem.',
+  { ic: 'cloudOk', c: 'c-green', t: 'Tudo salvo, sempre', d: 'Salva no aparelho a cada traço, funciona sem internet e sincroniza com a nuvem.',
     how: ['Abra sempre pelo ícone da Tela de Início.', 'Ajustes › "Fazer backup agora" gera uma cópia extra para guardar no iCloud Drive.'] },
 ];
 
@@ -34,7 +34,7 @@ function featureGrid(detailed) {
 export function showWelcome(lib) {
   let m;
   m = modal(el('div', { class: 'welcome' },
-    el('div', { class: 'welcome-top' }, el('img', { src: 'icons/icon-192.png', alt: '' }), el('div', {}, el('h2', {}, 'Boas-vindas ao Anota'), el('p', { class: 'muted' }, 'Seu caderno de estudos no iPad. Dá pra fazer muito mais do que anotar:'))),
+    el('div', { class: 'welcome-top' }, el('img', { src: 'icons/icon-192.png', alt: '' }), el('div', {}, el('h2', {}, 'Boas-vindas ao Anota'), el('p', { class: 'muted' }, 'Seu caderno de estudos no iPad e no PC. Dá pra fazer muito mais do que anotar:'))),
     featureGrid(false),
     el('div', { class: 'modal-actions' },
       el('button', { class: 'btn', onclick: () => { m.close(); showHelp(lib); } }, 'Ver como usar cada função'),
