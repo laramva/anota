@@ -96,7 +96,7 @@ async function main() {
     root.innerHTML = '<div class="fatal"><h2>Não foi possível abrir o armazenamento</h2><p>' + (e.message || e) + '</p><p>Feche outras abas do app e tente novamente.</p></div>';
     return;
   }
-  store.bus.on('save-error', e => toast('ERRO ao salvar: ' + (e?.name === 'QuotaExceededError' ? 'espaço do iPad cheio' : e?.message || e), { kind: 'error', timeout: 8000 }));
+  store.bus.on('save-error', e => toast('ERRO ao salvar: ' + (e?.name === 'QuotaExceededError' ? 'espaço do aparelho cheio' : e?.message || e), { kind: 'error', timeout: 8000 }));
   try {
     if (await audio.recoverRecordings()) toast('Uma gravação interrompida foi recuperada e salva.', { timeout: 6000 });
   } catch (e) { console.warn(e); }
