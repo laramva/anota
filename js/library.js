@@ -397,7 +397,7 @@ export class Library {
     const subj = (v.type === 'subject' || v.type === 'topic') ? this.byId.get(v.subjectId) : null;
     if (subj) {
       // toque no nome para renomear + botão de opções sempre visível
-      titleEl.append(el('button', { class: 'title-edit', title: 'Renomear', onclick: () => this.renameSubject(subj) }, el('span', {}, info.title), icon('pen', 18)));
+      titleEl.append(el('span', { class: 'title-edit' }, el('span', {}, info.title), el('button', { class: 'icon-btn small', title: 'Renomear', 'aria-label': 'Renomear', onclick: () => this.renameSubject(subj) }, icon('pen', 18))));
       actions.prepend(el('button', { class: 'btn', onclick: e => (this.isTopic(subj) ? this.topicMenu(e.currentTarget, subj) : this.subjectMenu(e.currentTarget, subj)) }, icon('more', 18), 'Opções'));
     } else titleEl.append(el('span', {}, info.title));
     m.append(el('header', { class: 'lib-head' },
