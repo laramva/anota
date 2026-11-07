@@ -30,6 +30,7 @@ export class Editor {
     this.onExit = onExit;
     this.cfg = Object.assign(structuredClone(DEFAULT_CFG), loadPref('toolcfg', {}));
     this.tool = loadPref('tool', 'pen');
+    if (this.tool === 'text') this.tool = 'pen'; // nunca abrir a nota já na ferramenta Texto
     this.fingerDraw = loadPref('fingerDraw', false);
     this.cam = { x: 0, y: 0, z: 1 };
     this.items = new Map();
@@ -49,6 +50,7 @@ export class Editor {
 
   // ---------- Carregamento ----------
   async init() {
+    if (location.hostname === 'localhost') window.__ed = this; // usado só pelo teste automático (tests/regression.js)
     this.buildDom();
     await this.loadData();
     this.layout();
@@ -157,7 +159,7 @@ export class Editor {
     r.innerHTML = '';
     r.className = 'editor';
 
-    this.titleBtn = el('button', { class: 'ed-title', onclick: () => this.rename() }, this.note.title);
+    this.titleBtn = el('span', { class: 'ed-title' }, this.note.title); // só mostra o nome; renomear fica em Mais › Renomear nota (evita teclado abrindo sem querer)
     this.toolBtns = {};
     // botões com nome embaixo do ícone (fica claro o que cada um faz)
     const lb = (ic, label, onClick, cls = '') => el('button', { class: 'lbtn ' + cls, title: label, 'aria-label': label, onclick: onClick }, icon(ic, 21), el('span', { class: 'lbl' }, label));
@@ -207,8 +209,11 @@ export class Editor {
   setTool(t) {
     if (this.editing) this.finishText();
     if (t !== 'lasso') this.clearSel();
+    // Texto é "de uma vez só": depois da caixa volta para a ferramenta anterior, e nunca fica salvo
+    // como ferramenta inicial (senão um toque da caneta ao abrir a nota abria o teclado)
+    if (t === 'text' && this.tool !== 'text') this.toolBeforeText = this.tool;
     this.tool = t;
-    savePref('tool', t);
+    if (t !== 'text') savePref('tool', t);
     this.updateToolUi();
   }
 
@@ -583,8 +588,9 @@ export class Editor {
       this.cancelTouchGesture(true);
     }
     if (type === 'touch') {
-      // palma da mão: ignorada com a caneta encostada, logo depois de escrever ou se o toque for largo
-      if (this.penDown || performance.now() - this.lastPenUp < 500 || (this.penSeen && Math.max(e.width || 0, e.height || 0) > 45)) { this.ignored.add(e.pointerId); return; }
+      // palma da mão: ignorada só com a caneta encostada ou logo depois de escrever.
+      // (NÃO usar a largura do toque: no iPad o dedo também é "largo" e isso travava rolar, zoom e desfazer)
+      if (this.penDown || performance.now() - this.lastPenUp < 300) { this.ignored.add(e.pointerId); return; }
       if (!this.fingerDraw || this.touches.size > 0 || this.drawPointer != null) {
         if (this.drawPointer != null && this.drawType === 'touch') this.abortDraw();
         return this.touchDown(e);
@@ -781,7 +787,7 @@ export class Editor {
         if (rec) { this.seekTo(rec, it.rec.t0 / 1000 - 1.5); return; }
       }
     }
-    if (this.tool === 'text') this.textTap(p, lx, ly);
+    // com o dedo nunca cria caixa de texto (o dedo é para rolar); só a caneta cria
   }
 
   // ---------- Desenho (caneta / mouse) ----------
@@ -1306,6 +1312,7 @@ export class Editor {
       this.persist('item', [it]);
       this.pushUndo({ type: 'update', before: [E.before], after: [{ ...it }] });
     }
+    if (this.tool === 'text') this.setTool(this.toolBeforeText && this.toolBeforeText !== 'text' ? this.toolBeforeText : 'pen');
     this.requestRender();
   }
 
@@ -1481,6 +1488,7 @@ export class Editor {
       { label: 'Importar PDF nesta nota', icon: 'file', onClick: () => this.importPdfHere() },
       Editor.clipboard?.length ? { label: 'Colar', icon: 'copy', onClick: () => this.pasteClipboard() } : null,
       { sep: true },
+      { label: 'Renomear nota', icon: 'pen', onClick: () => this.rename() },
       { label: 'Exportar / compartilhar PDF', icon: 'share', onClick: () => this.exportPdf() },
       { label: 'Ajustar à largura', icon: 'search', onClick: () => { const cy = this.cam.y + this.vh / this.cam.z / 2; this.fitWidth(false); this.cam.y = cy - this.vh / this.cam.z / 2; this.clampCam(); this.requestRender(); } },
       { label: 'Desenhar com o dedo', icon: 'finger', checked: this.fingerDraw, onClick: () => { this.fingerDraw = !this.fingerDraw; savePref('fingerDraw', this.fingerDraw); toast(this.fingerDraw ? 'O dedo agora desenha. Use dois dedos para rolar.' : 'Só o Apple Pencil desenha. O dedo rola a página.'); } },
