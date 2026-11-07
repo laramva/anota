@@ -26,13 +26,47 @@ function stamp(rec) {
   return rec;
 }
 
+// Rede de segurança: o que não conseguiu salvar fica na fila (em memória) e é salvo de novo
+// sozinho a cada 2 segundos, até dar certo. Só avisa você se continuar falhando.
+const failed = new Map(); // "store:id" -> { store, rec }
+let retryT = null, failingSince = 0, warned = false;
+
+function queueFailed(store, recs, e) {
+  for (const r of recs) failed.set(store + ':' + (r.id ?? r.key), { store, rec: r });
+  if (!failingSince) failingSince = Date.now();
+  if (e?.name === 'QuotaExceededError' || (!warned && Date.now() - failingSince > 4000)) { warned = true; bus.emit('save-error', e); }
+  clearTimeout(retryT);
+  retryT = setTimeout(retryFailed, 2000);
+}
+
+export async function retryFailed() {
+  if (!failed.size) return true;
+  const byStore = new Map();
+  for (const { store, rec } of failed.values()) { if (!byStore.has(store)) byStore.set(store, []); byStore.get(store).push(rec); }
+  try {
+    for (const [store, recs] of byStore) await db.putMany(store, recs);
+    failed.clear();
+    if (warned) bus.emit('save-ok');
+    failingSince = 0; warned = false;
+    bus.emit('dirty');
+    return true;
+  } catch (e) {
+    queueFailed('', [], e);
+    return false;
+  }
+}
+export const pendingSaves = () => failed.size;
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') retryFailed(); });
+
 export async function save(kind, rec) {
   stamp(rec);
+  const store = KIND_STORE[kind];
   try {
-    await db.put(KIND_STORE[kind], rec);
+    await db.put(store, rec);
   } catch (e) {
-    bus.emit('save-error', e);
-    throw e;
+    console.warn('salvar', e);
+    queueFailed(store, [rec], e);
+    return rec;
   }
   bus.emit('dirty', kind, rec);
   return rec;
@@ -41,11 +75,13 @@ export async function save(kind, rec) {
 export async function saveMany(kind, recs) {
   if (!recs.length) return;
   for (const r of recs) stamp(r);
+  const store = KIND_STORE[kind];
   try {
-    await db.putMany(KIND_STORE[kind], recs);
+    await db.putMany(store, recs);
   } catch (e) {
-    bus.emit('save-error', e);
-    throw e;
+    console.warn('salvar', e);
+    queueFailed(store, recs, e);
+    return;
   }
   bus.emit('dirty', kind, recs[0]);
 }
