@@ -12,6 +12,7 @@ import * as audio from './audio.js';
 import { prepareImage } from './editor.js';
 import { showWelcome, showHelp } from './help.js';
 import * as auto from './autocards.js';
+const AUTO_CARDS_OFF = true; // flashcards automáticos desligados
 
 // Segurar o dedo (~0,5 s) abre o menu, sem disparar o toque normal
 function longPress(node, fn) {
@@ -73,14 +74,11 @@ export class Library {
       if (sync.configured() && !sync.getUser() && !loadPref('loginAsked', false)) { savePref('loginAsked', true); this.askLogin(welcome); }
       else welcome();
     });
-    // flashcards automáticos das anotações (roda sozinho, fora da nota aberta)
-    this.autoT = setTimeout(() => this.runAuto(false), 4000);
-    const vis = () => { if (document.visibilityState === 'visible') { clearTimeout(this.autoT); this.autoT = setTimeout(() => this.runAuto(false), 4000); } };
-    document.addEventListener('visibilitychange', vis);
-    this.unsubs.push(() => document.removeEventListener('visibilitychange', vis), () => clearTimeout(this.autoT));
+    // flashcards automáticos das anotações: DESLIGADOS a pedido (as cartas agora vêm da tela "Adicionar perguntas")
   }
 
   async runAuto(force) {
+    if (AUTO_CARDS_OFF) return;
     if (!force && !auto.isEnabled()) return;
     if (force) toast('Lendo suas anotações para criar flashcards…', { timeout: 2500 });
     const s = await auto.run({ force });
@@ -397,7 +395,7 @@ export class Library {
     const subj = (v.type === 'subject' || v.type === 'topic') ? this.byId.get(v.subjectId) : null;
     if (subj) {
       // toque no nome para renomear + botão de opções sempre visível
-      titleEl.append(el('span', { class: 'title-edit' }, el('span', {}, info.title), el('button', { class: 'icon-btn small', title: 'Renomear', 'aria-label': 'Renomear', onclick: () => this.renameSubject(subj) }, icon('pen', 18))));
+      titleEl.append(el('button', { class: 'title-edit', title: 'Toque para renomear', 'aria-label': 'Renomear', onclick: () => this.renameSubject(subj) }, el('span', {}, info.title), icon('pen', 18)));
       actions.prepend(el('button', { class: 'btn', onclick: e => (this.isTopic(subj) ? this.topicMenu(e.currentTarget, subj) : this.subjectMenu(e.currentTarget, subj)) }, icon('more', 18), 'Opções'));
     } else titleEl.append(el('span', {}, info.title));
     m.append(el('header', { class: 'lib-head' },
@@ -700,7 +698,7 @@ export class Library {
       box.innerHTML = '';
       box.append(el('div', { class: 'settings-head' }, el('h2', {}, 'Ajustes'), iconBtn('x', 'Fechar', () => m.close())));
       box.append(await this.accountSection(draw));
-      box.append(await this.autoSection(draw, m));
+      if (!AUTO_CARDS_OFF) box.append(await this.autoSection(draw, m));
       box.append(el('section', {},
         el('h4', {}, 'Backup em arquivo'),
         el('p', { class: 'muted small' }, 'Gera um arquivo .zip com todas as notas, PDFs e áudios. Salve no app Arquivos ou no iCloud Drive. Serve para restaurar tudo em qualquer aparelho.'),
