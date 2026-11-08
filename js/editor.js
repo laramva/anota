@@ -159,7 +159,7 @@ export class Editor {
     r.innerHTML = '';
     r.className = 'editor';
 
-    this.titleBtn = el('span', { class: 'ed-title' }, this.note.title); // só mostra o nome; renomear fica em Mais › Renomear nota (evita teclado abrindo sem querer)
+    this.titleBtn = el('button', { class: 'ed-title', title: 'Toque para renomear', onclick: () => this.rename() }, this.note.title); // toque no título renomeia (também em Mais › Renomear nota)
     this.toolBtns = {};
     // botões com nome embaixo do ícone (fica claro o que cada um faz)
     const lb = (ic, label, onClick, cls = '') => el('button', { class: 'lbtn ' + cls, title: label, 'aria-label': label, onclick: onClick }, icon(ic, 21), el('span', { class: 'lbl' }, label));
