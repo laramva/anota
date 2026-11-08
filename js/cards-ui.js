@@ -136,26 +136,14 @@ export class CardsSection {
         el('div', {}, icon('brain', 20), el('b', {}, st.retention == null ? '—' : Math.round(st.retention * 100) + '%'), el('span', { class: 'muted small' }, 'de acerto (30 dias)'))),
       total ? el('button', { class: 'btn primary big', onclick: () => this.study(this.decks) }, icon('play', 18), 'Estudar tudo agora') : null);
     m.append(hero);
-    // status dos flashcards automáticos
-    const last = await auto.lastRun();
-    const autoCount = (await C.allFnotes()).filter(f => f.auto).length;
-    m.append(el('div', { class: 'auto-card' },
-      el('span', { class: 'qa-ico c-purple' }, icon('sparkle', 22)),
-      el('div', { class: 'auto-txt' },
-        el('b', {}, 'Flashcards automáticos ' + (auto.isEnabled() ? '· ligados' : '· desligados')),
-        el('p', { class: 'muted small' }, last
-          ? `Última leitura: ${fmtDate(last.at)} · ${last.cards} carta(s) nova(s)` + (autoCount ? ` · ${autoCount} no total` : '') + (last.error ? ` · aviso: ${last.error}` : '')
-          : 'O app cria cartas sozinho do que você marca com marca-texto nos PDFs, do "termo: definição" nas caixas de texto e, com a chave grátis do Google, da sua letra à mão.'),
-        !auto.getKey() ? el('p', { class: 'small' }, 'Para ler também a letra à mão: ', el('button', { class: 'link-btn', onclick: () => this.lib.openSettings() }, 'adicionar chave grátis')) : null),
-      el('div', { class: 'row-btns' },
-        autoCount ? el('button', { class: 'btn small', onclick: () => this.go({ type: 'browse', auto: true }) }, 'Ver automáticas') : null,
-        el('button', { class: 'btn small primary', disabled: auto.isRunning(), onclick: () => this.lib.runAuto(true) }, icon('sparkle', 16), auto.isRunning() ? 'Lendo…' : 'Gerar agora'))));
+    // (flashcards automáticos desligados a pedido: as cartas agora são criadas pela tela "Adicionar perguntas")
     if (!this.decks.length) {
       m.append(el('div', { class: 'fc-empty' },
         el('h3', {}, 'Como funciona'),
         el('ol', {},
-          el('li', {}, el('b', {}, 'Crie um baralho'), ' (ex.: "Biologia — Citologia") e ligue a uma matéria.'),
-          el('li', {}, el('b', {}, 'Adicione cartas'), ': pergunta e resposta, lacunas, digitar a resposta… com texto, imagens e desenhos com o Pencil.'),
+          el('li', {}, el('b', {}, 'Crie um baralho'), ' (ex.: "Biologia — Microscópios") e ligue a uma matéria.'),
+          el('li', {}, el('b', {}, 'Escreva várias perguntas e respostas de uma vez'), ': o app cria um flashcard separado para cada uma.'),
+          el('li', {}, el('b', {}, 'Ou adicione cartas uma a uma'), ': lacunas, digitar a resposta… com texto, imagens e desenhos com o Pencil.'),
           el('li', {}, el('b', {}, 'Ou crie a partir das suas anotações'), ': na nota, use o Laço para selecionar algo e toque em "Flashcard".'),
           el('li', {}, el('b', {}, 'Revise todo dia'), ': o app mostra só o que está quase esquecendo.')),
         el('div', { class: 'row-btns' },
@@ -197,7 +185,8 @@ export class CardsSection {
   deckMenu(anchor, d) {
     menu(anchor, [
       { label: 'Abrir', icon: 'cards', onClick: () => this.go({ type: 'deck', deckId: d.id }) },
-      { label: 'Renomear', icon: 'pen', onClick: async () => { const n = await promptText('Renomear baralho', d.name, { ok: 'Salvar' }); if (n && n !== d.name) { d.name = n; await store.save('deck', d); toast(`Renomeado para "${n}".`); this.refresh(); } } },
+      { label: 'Renomear', icon: 'pen', onClick: () => this.renameDeck(d) },
+      { label: 'Adicionar várias perguntas', icon: 'list', onClick: () => this.bulkAdd(d) },
       { label: 'Nova carta', icon: 'plus', onClick: () => openCardEditor({ lib: this.lib, deckId: d.id, onSaved: () => this.refresh() }) },
       { label: 'Importar cartas', icon: 'upload', onClick: () => this.openImport(d.id) },
       { label: 'Opções e limites', icon: 'gear', onClick: () => this.deckOptions(d) },
@@ -221,8 +210,96 @@ export class CardsSection {
     }
     const d = await C.createDeck(name, subjectId);
     await this.load();
-    this.go({ type: 'deck', deckId: d.id });
+    await this.go({ type: 'deck', deckId: d.id });
+    this.bulkAdd(d); // já abre a tela para escrever as perguntas e respostas
     return d;
+  }
+
+  async renameDeck(d) {
+    const n = await promptText('Renomear baralho', d.name, { ok: 'Salvar' });
+    if (n && n !== d.name) { d.name = n; await store.save('deck', d); toast(`Renomeado para "${n}".`); this.refresh(); }
+  }
+
+  // ---------- Várias perguntas de uma vez: cada linha vira um flashcard separado ----------
+  bulkAdd(d) {
+    const draftKey = 'bulkDraft:' + d.id;
+    const rowsBox = el('div', { class: 'bulk-rows' });
+    const count = el('span', { class: 'muted small' });
+    const typeSel = el('select', { class: 'field' },
+      el('option', { value: 'basic' }, 'Pergunta → resposta'),
+      el('option', { value: 'reverse' }, 'Pergunta → resposta e também ao contrário'),
+      el('option', { value: 'type' }, 'Digitar a resposta'));
+    typeSel.value = loadPref('bulkType', 'basic');
+    typeSel.addEventListener('change', () => savePref('bulkType', typeSel.value));
+    let saved = false, saveT = null, m;
+    const grow = t => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 2 + 'px'; };
+    const rows = () => [...rowsBox.querySelectorAll('.bulk-row')].map(r => ({ r, q: r.querySelector('.bulk-q'), a: r.querySelector('.bulk-a') }));
+    const values = () => rows().map(x => ({ q: x.q.value.trim(), a: x.a.value.trim(), x }));
+    const storeDraft = () => { if (saved) return; const v = values().filter(x => x.q || x.a).map(({ q, a }) => ({ q, a })); savePref(draftKey, v.length ? v : null); };
+    const update = () => {
+      const v = values(), ready = v.filter(x => x.q && x.a).length;
+      rows().forEach((x, i) => { x.r.querySelector('.bulk-n').textContent = i + 1; });
+      count.textContent = ready ? `${ready} flashcard(s) prontos para criar` : 'Escreva pelo menos uma pergunta e a resposta.';
+      saveBtn.textContent = ready ? `Criar ${ready} flashcard${ready > 1 ? 's' : ''}` : 'Criar flashcards';
+      clearTimeout(saveT); saveT = setTimeout(storeDraft, 400);
+    };
+    const addRow = (q = '', a = '', focus = false) => {
+      const qa = el('textarea', { class: 'field ta bulk-q', rows: 1, placeholder: 'Pergunta', 'aria-label': 'Pergunta' });
+      const an = el('textarea', { class: 'field ta bulk-a', rows: 1, placeholder: 'Resposta', 'aria-label': 'Resposta' });
+      qa.value = q; an.value = a;
+      const row = el('div', { class: 'bulk-row' },
+        el('span', { class: 'bulk-n' }),
+        el('div', { class: 'bulk-fields' }, qa, an),
+        iconBtn('x', 'Apagar esta pergunta', () => { row.remove(); if (!rowsBox.children.length) addRow(); update(); }, 'small'));
+      for (const t of [qa, an]) t.addEventListener('input', () => { grow(t); update(); });
+      // "Enter" passa para o próximo campo (Shift+Enter pula linha dentro do campo)
+      qa.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); an.focus(); } });
+      an.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+        e.preventDefault();
+        const next = row.nextElementSibling;
+        if (next) next.querySelector('.bulk-q').focus(); else addRow('', '', true);
+      });
+      rowsBox.append(row);
+      requestAnimationFrame(() => { grow(qa); grow(an); });
+      if (focus) { qa.focus(); row.scrollIntoView?.({ block: 'nearest' }); }
+      update();
+      return row;
+    };
+    const saveBtn = el('button', { class: 'btn primary', onclick: async () => {
+      const v = values().filter(x => x.q || x.a);
+      const missing = v.find(x => !x.q || !x.a);
+      if (missing) {
+        const n = rows().indexOf(missing.x) + 1;
+        toast(missing.q ? `A pergunta ${n} está sem resposta.` : `A resposta ${n} está sem pergunta.`, { timeout: 4000 });
+        (missing.q ? missing.x.a : missing.x.q).focus();
+        return;
+      }
+      if (!v.length) { toast('Escreva pelo menos uma pergunta e a resposta.'); return; }
+      const html = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+      const b = busy('Criando flashcards…');
+      try {
+        for (const x of v) await C.saveFnote({ deckId: d.id, type: typeSel.value, front: html(x.q), back: html(x.a), extra: '', tags: [] });
+      } finally { b.close(); }
+      saved = true; savePref(draftKey, null);
+      m.close();
+      toast(`✓ ${v.length} flashcard(s) criados em "${d.name}".`, { timeout: 5000 });
+      this.refresh();
+    } }, 'Criar flashcards');
+    m = modal(el('div', { class: 'bulk' },
+      el('div', { class: 'settings-head' }, el('h2', {}, 'Perguntas e respostas'), iconBtn('x', 'Fechar', () => m.close())),
+      el('p', { class: 'muted small' }, `Baralho: `, el('b', {}, d.name), '. Escreva cada pergunta com a sua resposta. Cada uma vira um flashcard separado. Dica: no teclado, "Enter" pula para o próximo campo.'),
+      rowsBox,
+      el('div', { class: 'row-btns' },
+        el('button', { class: 'btn', onclick: () => addRow('', '', true) }, icon('plus', 18), 'Mais uma pergunta'),
+        el('button', { class: 'btn small', onclick: () => { m.close(); this.openImport(d.id); } }, icon('upload', 16), 'Colar uma lista pronta')),
+      el('label', { class: 'field-row' }, el('span', {}, 'Tipo de carta'), typeSel),
+      el('div', { class: 'modal-actions bulk-actions' }, count, el('button', { class: 'btn', onclick: () => m.close() }, 'Fechar'), saveBtn)),
+      { wide: true, onClose: () => { clearTimeout(saveT); storeDraft(); } });
+    const draft = loadPref(draftKey, null);
+    if (Array.isArray(draft) && draft.length) { draft.forEach(x => addRow(x.q, x.a)); toast('Continuando de onde você parou (rascunho guardado).', { timeout: 3500 }); }
+    else { addRow(); addRow(); addRow(); }
+    setTimeout(() => rowsBox.querySelector('.bulk-q')?.focus(), 80);
   }
 
   async deckOptions(d) {
@@ -280,11 +357,13 @@ export class CardsSection {
     const path = this.deckPath(d);
     this.head(m, [
       el('button', { class: 'crumb', onclick: () => this.go({ type: 'home' }) }, icon('cards', 18), 'Flashcards'), el('span', { class: 'crumb-sep' }, icon('chevron', 18)),
-      el('span', { class: 'subj-dot big', style: { background: this.deckColor(d) } }), el('span', {}, d.name)], [
+      el('span', { class: 'subj-dot big', style: { background: this.deckColor(d) } }),
+      el('button', { class: 'title-edit deck-title', title: 'Toque para renomear', onclick: () => this.renameDeck(d) }, el('span', {}, d.name), icon('pen', 18))], [
       el('button', { class: 'btn', onclick: () => this.openImport(d.id) }, icon('upload', 18), 'Importar'),
       el('button', { class: 'btn', onclick: () => this.deckOptions(d) }, icon('gear', 18), 'Opções'),
       iconBtn('more', 'Mais', e => this.deckMenu(e.currentTarget, d)),
-      el('button', { class: 'btn primary', onclick: () => openCardEditor({ lib: this.lib, deckId: d.id, onSaved: () => this.refresh() }) }, icon('plus', 18), 'Nova carta')]);
+      el('button', { class: 'btn', onclick: () => openCardEditor({ lib: this.lib, deckId: d.id, onSaved: () => this.refresh() }) }, icon('plus', 18), 'Nova carta'),
+      el('button', { class: 'btn primary', onclick: () => this.bulkAdd(d) }, icon('list', 18), 'Adicionar perguntas')]);
     if (path.length) m.append(el('p', { class: 'muted small' }, path.map(p => p.name).join(' › ')));
     const cards = await C.allCards([d.id]);
     const fnotes = new Map((await C.allFnotes([d.id])).map(n => [n.id, n]));
@@ -305,7 +384,9 @@ export class CardsSection {
   cardList(cards, fnotes, { deck, showDeck } = {}) {
     const wrap = el('div', { class: 'card-list-wrap' });
     const search = el('input', { type: 'search', class: 'search', placeholder: 'Buscar nas cartas…', value: this.query });
-    const filters = [['all', 'Todas'], ['auto', '✨ Automáticas'], ['new', 'Novas'], ['learn', 'Aprendendo'], ['review', 'Revisão'], ['flag', 'Marcadas'], ['susp', 'Suspensas']];
+    const hasAuto = cards.some(c => fnotes.get(c.fnoteId)?.auto); // filtro só aparece se ainda existirem cartas automáticas antigas
+    if (!hasAuto && this.filter === 'auto') this.filter = 'all';
+    const filters = [['all', 'Todas'], ...(hasAuto ? [['auto', '✨ Automáticas']] : []), ['new', 'Novas'], ['learn', 'Aprendendo'], ['review', 'Revisão'], ['flag', 'Marcadas'], ['susp', 'Suspensas']];
     const seg = el('div', { class: 'chips' });
     const list = el('div', { class: 'card-list' });
     const draw = () => {
@@ -324,7 +405,7 @@ export class CardsSection {
         if (q) { const fn = fnotes.get(c.fnoteId); if (!fn) return false; const t = (C.htmlToText(fn.front) + ' ' + C.htmlToText(fn.back) + ' ' + (fn.tags || []).join(' ')).toLowerCase(); if (!t.includes(q)) return false; }
         return true;
       }).sort((a, b) => a.createdAt - b.createdAt);
-      if (!rows.length) { list.append(el('p', { class: 'muted small empty-inline' }, cards.length ? 'Nenhuma carta com esse filtro.' : 'Nenhuma carta ainda. Toque em "Nova carta".')); return; }
+      if (!rows.length) { list.append(el('p', { class: 'muted small empty-inline' }, cards.length ? 'Nenhuma carta com esse filtro.' : 'Nenhuma carta ainda. Toque em "Adicionar perguntas" para escrever várias de uma vez.')); return; }
       const deckName = new Map((this.decks || []).map(d => [d.id, d.name]));
       for (const c of rows.slice(0, 500)) {
         const fn = fnotes.get(c.fnoteId);
